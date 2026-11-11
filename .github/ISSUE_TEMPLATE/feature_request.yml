@@ -1,0 +1,16 @@
+name: Feature or widget idea
+description: Suggest an improvement or a new widget.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: The problem it solves and how you imagine it on the bar.
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Where does the data come from?
+      description: For a widget, the local source or public API it would use.

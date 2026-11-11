@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    env:
+      # the tests do not start Electron, so skip its ~100 MB download
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Syntax check
+        shell: bash
+        run: |
+          for f in $(git ls-files 'src/*.js' 'src/**/*.js'); do node --check "$f" || exit 1; done
+      - name: Native code compiles
+        run: npm run check:native
+      - run: npm test

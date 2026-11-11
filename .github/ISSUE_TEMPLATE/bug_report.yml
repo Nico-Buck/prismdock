@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work as described.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected and what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the Weather panel
+        2. …
+  - type: input
+    id: version
+    attributes:
+      label: PrismDock version
+      description: Settings → About
+      placeholder: 1.3.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and displays
+      placeholder: Windows 11 24H2, two monitors (100 % and 150 %)
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: Please do not paste API keys, tokens or your config.json.

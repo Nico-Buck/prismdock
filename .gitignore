@@ -1,0 +1,26 @@
+# dependencies and build output
+node_modules/
+dist/
+out/
+
+# logs and local test data
+*.log
+npm-debug.log*
+.work/
+test-profile/
+
+# personal configuration and secrets - never commit these
+config.json
+data.json
+secrets.bin
+taskbar-restore.json
+.env
+.env.*
+
+# editors and OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store

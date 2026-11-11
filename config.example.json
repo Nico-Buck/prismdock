@@ -1,0 +1,195 @@
+{
+  "version": 4,
+  "appearance": {
+    "theme": "glass",
+    "custom": {
+      "tint": "#141416",
+      "tintOpacity": 0.42,
+      "blur": 26,
+      "saturation": 1.7,
+      "brightness": 1,
+      "refraction": 0.55,
+      "specular": 0.55,
+      "chroma": 0.25,
+      "radius": 22,
+      "tileRadius": 18,
+      "border": "#ffffff",
+      "borderOpacity": 0.12,
+      "rim": 0.5,
+      "shadow": 0.45,
+      "tile": "#000000",
+      "tileOpacity": 0.18,
+      "text": "#f5f5f7",
+      "accent": "#0a84ff"
+    },
+    "animations": true,
+    "animSpeed": 1,
+    "iconSize": 37,
+    "fontScale": 1,
+    "glassEngine": "wallpaper"
+  },
+  "layout": {
+    "edge": "bottom",
+    "mode": "pill",
+    "size": "M",
+    "height": 54,
+    "maxWidth": 0,
+    "margin": 6,
+    "gap": 3,
+    "padding": 3,
+    "align": "center",
+    "offsetX": 0
+  },
+  "behavior": {
+    "autohide": false,
+    "autohidePer": {},
+    "autohideDelay": 700,
+    "hoverEffect": "lift",
+    "openOn": "click",
+    "closeOnBlur": true,
+    "startWithWindows": false,
+    "monitors": "all",
+    "monitorList": [],
+    "hideTaskbar": true,
+    "reserveSpace": true,
+    "clock24": true,
+    "fullscreenHide": true
+  },
+  "widgets": [
+    {
+      "uid": "winkey-mwcac5dz",
+      "type": "winkey",
+      "enabled": true,
+      "size": "auto",
+      "settings": {}
+    },
+    {
+      "uid": "apps-mwcac5e0",
+      "type": "apps",
+      "enabled": true,
+      "size": "auto",
+      "settings": {
+        "showStart": false
+      }
+    },
+    {
+      "uid": "claude-mwcac5e1",
+      "type": "claude",
+      "enabled": true,
+      "size": "auto",
+      "settings": {}
+    },
+    {
+      "uid": "cpu-mwcac5e2",
+      "type": "cpu",
+      "enabled": true,
+      "size": "auto",
+      "settings": {}
+    },
+    {
+      "uid": "ram-mwcac5e3",
+      "type": "ram",
+      "enabled": true,
+      "size": "auto",
+      "settings": {}
+    },
+    {
+      "uid": "nowplaying-mwcac5e4",
+      "type": "nowplaying",
+      "enabled": true,
+      "size": "auto",
+      "settings": {}
+    },
+    {
+      "uid": "calendar-mwcac5e5",
+      "type": "calendar",
+      "enabled": true,
+      "size": "auto",
+      "settings": {}
+    },
+    {
+      "uid": "weather-mwcac5e6",
+      "type": "weather",
+      "enabled": true,
+      "size": "auto",
+      "settings": {}
+    },
+    {
+      "uid": "volume-mwcac5e7",
+      "type": "volume",
+      "enabled": true,
+      "size": "auto",
+      "settings": {}
+    },
+    {
+      "uid": "battery-mwcac5e8",
+      "type": "battery",
+      "enabled": true,
+      "size": "auto",
+      "settings": {}
+    },
+    {
+      "uid": "clock-mwcac5e9",
+      "type": "clock",
+      "enabled": true,
+      "size": "auto",
+      "settings": {}
+    }
+  ],
+  "integrations": {
+    "weather": {
+      "city": "Berlin",
+      "lat": 52.52,
+      "lon": 13.405,
+      "unit": "celsius"
+    },
+    "github": {
+      "user": ""
+    },
+    "leetcode": {
+      "user": ""
+    },
+    "calendarIcs": {
+      "url": ""
+    },
+    "linear": {},
+    "supabase": {
+      "projectRef": ""
+    },
+    "youtube": {
+      "channelId": ""
+    },
+    "instagram": {},
+    "tiktok": {},
+    "x": {
+      "user": ""
+    },
+    "stripe": {},
+    "paypal": {
+      "clientId": "",
+      "sandbox": false
+    },
+    "shopify": {
+      "domain": ""
+    },
+    "revenueGoal": 5000,
+    "spotify": {
+      "clientId": ""
+    }
+  },
+  "performance": {
+    "powerSaver": false,
+    "intervals": {
+      "system": 1500,
+      "network": 1000,
+      "media": 1500,
+      "windows": 2000,
+      "weather": 900,
+      "online": 300
+    },
+    "screenTime": true
+  },
+  "customWidgets": [],
+  "profiles": [],
+  "activeProfile": "default"
+}
