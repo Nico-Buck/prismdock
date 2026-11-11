@@ -12,6 +12,8 @@
 ![Electron 33](https://img.shields.io/badge/Electron-33-47848f?logo=electron&logoColor=white)
 ![No telemetry](https://img.shields.io/badge/telemetry-none-30d158.svg)
 
+**[⬇ Download the latest release](https://github.com/Nico-Buck/prismdock/releases/latest)** – installer or portable .exe
+
 <img src="docs/screenshots/hero.png" alt="PrismDock: the glass bar with the Now Playing panel open" width="100%">
 
 </div>
