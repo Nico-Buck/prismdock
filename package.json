@@ -25,7 +25,7 @@
   "main": "src/main/main.js",
   "type": "commonjs",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "start": "electron .",

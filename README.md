@@ -98,7 +98,7 @@ Services you have not connected show clearly labelled sample data. Adding a key 
 
 ## Getting started
 
-**Requirements:** Windows 10 (1903+) or Windows 11, x64, and Node.js 20+ for building. No other SDKs –
+**Requirements:** Windows 10 (1903+) or Windows 11, x64, and Node.js 22+ for building. No other SDKs –
 the native Windows integration is C# compiled at runtime by the built-in Windows PowerShell 5.1.
 
 ```bash
