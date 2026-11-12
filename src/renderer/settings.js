@@ -8,6 +8,8 @@ import { registry, defaultsFor, CATEGORIES } from './widgets/index.js';
 import { morph } from './shared/morph.js';
 
 const api = window.prism;
+// no acrylic behind the window on this Windows version (see main.js): solid background instead of translucent
+if (new URLSearchParams(location.search).has('solid')) document.documentElement.classList.add('solid');
 let cfg = await api.config.get();
 let secretKeys = await api.secrets.keys();
 const info = await api.appInfo();

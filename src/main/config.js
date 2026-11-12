@@ -204,7 +204,12 @@ class Store {
     const d = DEFAULTS();
     if (section === 'layout') { this.config.layout = d.layout; this.config.widgets = d.widgets; this._syncProfile(); }
     else if (section && d[section] !== undefined) { this.config[section] = d[section]; if (PROFILE_KEYS.includes(section)) this._syncProfile(); }
-    else { const keepProfiles = this.config.profiles; this.config = d; this.config.profiles = keepProfiles; this._ensureProfiles(); this._syncProfile(); }
+    else {
+      // the saved layouts stay; the defaults go into the active one, not into "Default"
+      const keepProfiles = this.config.profiles; const keepActive = this.config.activeProfile;
+      this.config = d; this.config.profiles = keepProfiles; this.config.activeProfile = keepActive;
+      this._ensureProfiles(); this._syncProfile();
+    }
     this.saveConfig();
     return this.config;
   }

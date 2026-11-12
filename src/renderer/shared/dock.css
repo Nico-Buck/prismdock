@@ -47,7 +47,7 @@
 .rm, .szb { position: absolute; z-index: 5; border: 0; padding: 0; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0, 0, 0, .45); transition: opacity 120ms ease; }
 .rm { top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #ff453a; color: #fff; }
 .rm .ic { stroke-width: 3.2; }
-.szb { right: 2px; bottom: 2px; min-width: 16px; height: 14px; padding: 0 4px; border-radius: 7px; background: var(--accent); color: #fff; font: 700 9px/1 inherit; font-family: inherit; letter-spacing: .02em; }
+.szb { right: 2px; bottom: 2px; min-width: 16px; height: 14px; padding: 0 4px; border-radius: 7px; background: var(--accent); color: #fff; font: 700 9px/1 var(--font); font-family: inherit; letter-spacing: .02em; }
 .rm:hover, .szb:hover { opacity: .85; }
 
 /* ------------- floating glass surfaces ------------- */
@@ -66,7 +66,7 @@
 .panel-body::-webkit-scrollbar-thumb, .gal-grid::-webkit-scrollbar-thumb { background: var(--fill-2); border-radius: 5px; border: 3px solid transparent; background-clip: padding-box; }
 .panel-body::-webkit-scrollbar-thumb:hover, .gal-grid::-webkit-scrollbar-thumb:hover { background-color: var(--fill-3); }
 .ctx .swatches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 2px 4px 4px; }
-.ctx .sw { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); font: 600 10.5px inherit; font-family: inherit; transition: background calc(120ms * var(--anim)); }
+.ctx .sw { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); font: 600 10.5px var(--font); font-family: inherit; transition: background calc(120ms * var(--anim)); }
 .ctx .sw:hover { background: var(--fill-2); color: var(--text); }
 .ctx .sw i { width: 46px; height: 24px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-style: normal; font-weight: 700; font-size: 11px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18), 0 2px 6px rgba(0, 0, 0, .3); }
 .ctx .sw.on { color: var(--text); } .ctx .sw.on i { box-shadow: 0 0 0 2px var(--accent), 0 2px 6px rgba(0, 0, 0, .3); }
@@ -77,7 +77,7 @@
 }
 .ctx.measure { visibility: hidden; opacity: 0; display: flex; }
 
-.ctx .item { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: 500 13px inherit; font-family: inherit; text-align: left; transition: background calc(120ms * var(--anim)); }
+.ctx .item { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: 500 13px var(--font); font-family: inherit; text-align: left; transition: background calc(120ms * var(--anim)); }
 .ctx .item:hover { background: var(--fill-2); }
 .ctx .item span { flex: 1; white-space: nowrap; }
 .ctx .item .ic { color: var(--text-2); flex-shrink: 0; }
@@ -98,7 +98,7 @@
 
 /* ------------- gallery ------------- */
 .gallery .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: 0; border-radius: 14px; background: var(--fill-1); color: var(--text-2); font: 600 12px inherit; font-family: inherit; transition: background 120ms ease, color 120ms ease; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: 0; border-radius: 14px; background: var(--fill-1); color: var(--text-2); font: 600 12px var(--font); font-family: inherit; transition: background 120ms ease, color 120ms ease; }
 .chip:hover { background: var(--fill-2); color: var(--text); }
 .chip.on { background: var(--text); color: var(--panel-solid, #111); }
 [data-tone="dark"] .chip.on { color: #111; }
@@ -133,7 +133,7 @@
 .ed-hint b { color: var(--text); font-weight: 600; }
 .ed-hint .ic { flex-shrink: 0; margin-top: 1px; }
 .ed-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 4px; }
-.ed-item { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: 500 12.5px inherit; font-family: inherit; text-align: left; transition: background var(--t); }
+.ed-item { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: 500 12.5px var(--font); font-family: inherit; text-align: left; transition: background var(--t); }
 .ed-item:hover { background: var(--fill-1); }
 .ed-item.off { color: var(--text-3); }
 .ed-item .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

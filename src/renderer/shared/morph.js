@@ -49,8 +49,9 @@ function patchNode(a, b) {
     if (a.type === 'checkbox' || a.type === 'radio') a.checked = b.hasAttribute('checked');
     else if (a.tagName === 'INPUT' && b.hasAttribute('value') && a.value !== b.getAttribute('value')) a.value = b.getAttribute('value');
     if (a.tagName !== 'SELECT') return;
+    const want = b.value; // read first: patching moves surplus options from b into a
     patchChildren(a, b);
-    if (a.value !== b.value) a.value = b.value; // a select the user touched ignores 'selected' attributes
+    if (a.value !== want) a.value = want; // a select the user touched ignores 'selected' attributes
     return;
   }
   patchChildren(a, b);

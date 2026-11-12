@@ -39,7 +39,8 @@ function iconFor(ctx, p) {
   const c = ctx.icons.get(p);
   if (c !== undefined) return c;
   ctx.icons.set(p, null);
-  ctx.api.icon(p, 96).then((url) => { ctx.icons.set(p, url); ctx.rerender(); });
+  const retry = () => setTimeout(() => { if (ctx.icons.get(p) === null) ctx.icons.delete(p); }, 15000); // helper busy: ask again later
+  ctx.api.icon(p, 96).then((url) => { if (!url) return retry(); ctx.icons.set(p, url); ctx.rerender(); }, retry);
   return null;
 }
 
@@ -88,6 +89,8 @@ async function runCommand(ctx, target) {
   if (target === '@snip') return ctx.act('screenshot', { mode: 'region' });
   if (target === '@prism') return ctx.openSettings();
   if (target === '@editor') return ctx.openEditor();
+  // Windows Terminal ships with Windows 11 22H2+ only; elsewhere fall back to PowerShell
+  if (target === 'wt.exe') return (await ctx.act('open', { target }).catch(() => false)) || ctx.act('open', { target: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' });
   return ctx.act('open', { target });
 }
 

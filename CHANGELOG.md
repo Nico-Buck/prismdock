@@ -42,6 +42,15 @@ versions follow [Semantic Versioning](https://semver.org).
   wrong day; forecast weekdays were one day off west of UTC; a mistyped time zone broke World Clocks.
 - Spotify could lose its sign-in when two requests refreshed the token at once.
 - Long-running daily or weekly iCal series that started years ago did not show.
+- Windows 10 and early Windows 11: the app window had no acrylic and showed plain black; it now has a
+  solid background there. Terminal falls back to PowerShell where Windows Terminal is missing, Windows 10
+  shell processes no longer show up as apps, and tablet mode no longer counts as full screen.
+- Pomodoro and Timer alerts now also fire while the bar is hidden (show on hover, full-screen app).
+- Reset everything kept the saved layouts but overwrote "Default" instead of the active one.
+- Deleting the active layout in the Layout Editor now asks for a second click.
+- Several font sizes in menus and buttons were ignored (invalid CSS shorthand).
+- Notifications of the installed build use the installer's app ID, so Windows shows them.
+- Start with Windows keeps a choice made in Task Manager; failed app icons are retried later.
 
 ### Performance
 - Idle CPU −71 %, mouse-move CPU −49 %, idle memory −18 % compared with 1.2.0 (see README).

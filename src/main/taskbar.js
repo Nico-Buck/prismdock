@@ -13,6 +13,7 @@ function init(configGetter) { getConfig = configGetter; }
 // releases its work area) and its windows are hidden. The original state is written to disk first, so it
 // can be restored on quit, by the helper's crash watchdog, or on the next start after a hard crash.
 let taskbarHidden = false;
+let guardStarted = false; // one guardian per PrismDock process; it lives until this process exits
 const TB_FILE = () => path.join(app.getPath('userData'), 'taskbar-restore.json');
 async function setTaskbarHidden(hide) {
   if (hide === taskbarHidden && !hide) return;
@@ -26,9 +27,12 @@ async function setTaskbarHidden(hide) {
       if (info && info.visible && info.state >= 0) fs.writeFileSync(TB_FILE(), JSON.stringify({ state: info.state, at: new Date().toISOString() }));
     }
     const monitors = targetDisplays(getConfig()).flatMap(physRect);
-    await native.call('taskbar', { show: false, monitors }).catch(() => null);
+    // the recorded original goes along: a restarted helper (or the first start after a reboot) would
+    // otherwise take our own auto-hide for the user's setting and restore that after a crash
+    let orig = -1; try { orig = JSON.parse(fs.readFileSync(TB_FILE(), 'utf8')).state; } catch { /* none */ }
+    await native.call('taskbar', { show: false, monitors, restore: orig }).catch(() => null);
     // a guardian outside our process job restores the taskbar if PrismDock is killed or crashes
-    if (!taskbarHidden && fs.existsSync(TB_FILE())) startGuard();
+    if (!guardStarted && fs.existsSync(TB_FILE())) { guardStarted = true; startGuard(); }
     taskbarHidden = true;
   } else {
     await restoreTaskbar();
@@ -47,7 +51,9 @@ async function restoreTaskbar({ forget = true } = {}) {
   try { restore = JSON.parse(fs.readFileSync(TB_FILE(), 'utf8')).state; } catch { /* nothing saved */ }
   if (!taskbarHidden && restore < 0) return;
   try { await native.call('taskbar', { show: true, restore }, 4000); } catch {
-    return; // helper busy or gone: keep the record so the guardian or the next start restores it
+    // helper busy or restarting: keep the record (the guardian or the next start restores it) and try again
+    setTimeout(() => { if (!getConfig().behavior.hideTaskbar) restoreTaskbar().catch(() => {}); }, 3000);
+    return;
   }
   if (forget) try { fs.unlinkSync(TB_FILE()); } catch { /* already gone */ }
   taskbarHidden = false;

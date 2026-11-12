@@ -155,7 +155,7 @@
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 10px;
-  border: 0; background: var(--fill-2); color: var(--text); font: 600 12.5px inherit; font-family: inherit; cursor: default;
+  border: 0; background: var(--fill-2); color: var(--text); font: 600 12.5px var(--font); font-family: inherit; cursor: default;
   transition: background 120ms ease, opacity 120ms ease; white-space: nowrap;
 }
 .btn:hover { background: var(--fill-3); } .btn:active { opacity: .8; }
@@ -170,14 +170,14 @@
 
 .inp {
   height: 34px; width: 100%; padding: 0 11px; border-radius: 10px; border: 1px solid var(--tile-border); outline: none;
-  background: var(--fill-1); color: var(--text); font: 500 13px inherit; font-family: inherit; transition: border-color var(--t), background var(--t);
+  background: var(--fill-1); color: var(--text); font: 500 13px var(--font); font-family: inherit; transition: border-color var(--t), background var(--t);
 }
 .inp:focus { border-color: var(--accent); background: var(--fill-2); }
 textarea.inp { height: auto; min-height: 160px; padding: 10px 11px; resize: none; line-height: 1.45; }
 .inp::placeholder { color: var(--text-3); }
 
 .seg { display: inline-flex; padding: 2px; border-radius: 10px; background: var(--fill-1); gap: 2px; }
-.seg button { height: 26px; padding: 0 10px; border-radius: 8px; border: 0; background: transparent; color: var(--text-2); font: 600 12px inherit; font-family: inherit; transition: background var(--t), color var(--t); }
+.seg button { height: 26px; padding: 0 10px; border-radius: 8px; border: 0; background: transparent; color: var(--text-2); font: 600 12px var(--font); font-family: inherit; transition: background var(--t), color var(--t); }
 .seg button.on { background: var(--fill-3); color: var(--text); }
 
 input[type=range].slider { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; border-radius: 13px; background: var(--track); overflow: hidden; outline: none; cursor: default; }
@@ -243,7 +243,7 @@ input[type=range].rng.sm::-webkit-slider-thumb { width: 13px; height: 13px; marg
 .mix .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); font-weight: 600; }
 .mix .ibtn { width: 26px; height: 26px; border-radius: 8px; }
 .pn-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 10px; background: var(--fill-1); }
-.pn-tabs button { flex: 1; height: 26px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font: 600 12px inherit; font-family: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: background var(--t), color var(--t); }
+.pn-tabs button { flex: 1; height: 26px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font: 600 12px var(--font); font-family: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: background var(--t), color var(--t); }
 .pn-tabs button.on { background: var(--fill-3); color: var(--text); }
 
 /* Windows Start button: native-looking, centered logo with hover light */

@@ -17,7 +17,11 @@ const ASSETS = path.join(__dirname, '..', '..', 'assets');
 // development/testing: run against a separate profile instead of %APPDATA%\prismdock
 if (process.env.PRISM_USER_DATA) app.setPath('userData', path.resolve(process.env.PRISM_USER_DATA));
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
-app.setAppUserModelId('PrismDock');
+// the same ID as the installer's Start menu shortcut (build.appId), or Windows drops the notifications
+app.setAppUserModelId('local.prismdock');
+// Windows build: acrylic backgrounds need Windows 11 22H2, round corners Windows 11
+const WIN_BUILD = Number(require('os').release().split('.')[2]) || 0;
+const ACRYLIC = WIN_BUILD >= 22621; const WIN11 = WIN_BUILD >= 22000;
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 let store;
@@ -135,14 +139,15 @@ function openSettings(section) {
   settingsWin = new BrowserWindow({
     width: 1220, height: 820, minWidth: 980, minHeight: 640, show: false,
     titleBarStyle: 'hidden', titleBarOverlay: { color: '#00000000', symbolColor: '#f5f5f7', height: 46 },
-    backgroundMaterial: 'acrylic', backgroundColor: '#00000000', title: 'PrismDock',
+    // without acrylic (Windows 10, early Windows 11) the transparent page would show plain black: draw it solid
+    backgroundMaterial: ACRYLIC ? 'acrylic' : 'none', backgroundColor: ACRYLIC ? '#00000000' : '#141418', title: 'PrismDock',
     icon: path.join(ASSETS, 'icon.png'),
     webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, sandbox: true, backgroundThrottling: false },
   });
-  settingsWin.loadURL(`app://prism/settings.html${section ? '#' + section : ''}`);
+  settingsWin.loadURL(`app://prism/settings.html${ACRYLIC ? '' : '?solid'}${section ? '#' + section : ''}`);
   settingsWin.once('ready-to-show', () => settingsWin.show());
   // round window corners like every Windows 11 window (the custom title bar opts out of them)
-  settingsWin.once('show', () => native.call('round', { hwnd: Number(settingsWin.getNativeWindowHandle().readBigUInt64LE(0)) }).catch((e) => console.warn('round corners:', e.message)));
+  if (WIN11) settingsWin.once('show', () => native.call('round', { hwnd: Number(settingsWin.getNativeWindowHandle().readBigUInt64LE(0)) }).catch((e) => console.warn('round corners:', e.message)));
   if (process.env.PRISM_DEBUG) settingsWin.webContents.on('console-message', (_e, level, msg, line, src) => console.log(`[settings ${level}] ${msg} (${src}:${line})`));
   settingsWin.on('closed', () => { settingsWin = null; });
 }
@@ -176,10 +181,12 @@ function applyFullscreen() {
   }
 }
 native.on('fullscreen', (m) => { fsRects = m.rects || []; applyFullscreen(); });
+let helperStarts = 0;
 native.on('ready', () => {
   native.call('fswatch').catch(() => {}); native.call('volwatch').catch(() => {});
   // a restarted helper starts without the hidden taskbar and the reserved strips: apply them again
-  if (store && (store.config.behavior.hideTaskbar || docks.size)) layoutDocks();
+  // (the first start is handled by the normal startup)
+  if (helperStarts++ && store && (store.config.behavior.hideTaskbar || docks.size)) layoutDocks();
 });
 // live volume from Core Audio: coalesced to one update per frame, merged into the cached 'volume' value
 let volPush = null;
@@ -235,8 +242,12 @@ function launcherPath() { return process.env.PORTABLE_EXECUTABLE_FILE || process
 function setStartWithWindows(on) {
   if (!app.isPackaged) return; // `npm start` would register electron.exe
   try {
-    // same registry value as older versions (named after the app), so a stale temp path is overwritten
-    app.setLoginItemSettings({ openAtLogin: on, path: launcherPath(), args: ['--autostart'] });
+    // The Run value keeps its name 'PrismDock' (Electron would name it after the AppUserModelId), so the
+    // entry of older versions with the temp path is overwritten, not duplicated. A user who disabled it in
+    // Task Manager keeps it disabled: Electron would re-enable it on every write.
+    const opts = { path: launcherPath(), args: ['--autostart'], name: 'PrismDock' };
+    const item = app.getLoginItemSettings(opts).launchItems?.find((i) => i.name === 'PrismDock');
+    app.setLoginItemSettings({ ...opts, openAtLogin: on, enabled: item?.enabled ?? true });
   } catch (e) { console.warn('start with Windows:', e.message); }
 }
 function applyConfig(prev) {
@@ -348,7 +359,7 @@ function registerIpc() {
       case 'closeWindow': providers.invalidate('windows'); return native.call('closeWindow', { hwnd: a.hwnd });
       case 'key': return native.call('key', { vk: a.vk });
       case 'start': return native.call('key', { vk: 0x5B });
-      case 'media': providers.invalidate('media'); return native.call('mediaCmd', { action: a.action, position: a.position || 0 });
+      case 'media': providers.invalidate('media'); return native.call('mediaCmd', { action: a.action, position: a.position || 0 }, 12000);
       case 'spotifyConnect': await spotify.connect(); providers.invalidate('spotify'); return true;
       case 'spotifyDisconnect': spotify.disconnect(); providers.invalidate('spotify'); return true;
       case 'spotifySeek': providers.invalidate('spotify'); providers.invalidate('media'); return spotify.seek(a.position);

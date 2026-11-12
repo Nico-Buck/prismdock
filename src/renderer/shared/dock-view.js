@@ -95,7 +95,12 @@ export class DockView {
     if (this.selected && !this.cfg.widgets.some((w) => w.uid === this.selected)) this.selected = null;
     for (const t of this.tiles.values()) this._renderTile(t, true);
     if (this.panel?.t && !this.tiles.has(this.panel.t.inst.uid)) this.closePanel();
-    else if (this.panel?.t) { this.panel.t = this.tiles.get(this.panel.t.inst.uid); this._renderPanel(true); }
+    else if (this.panel?.t) {
+      // the panel's own subscriptions write into the old tile's data: reopen it on the new tile
+      const nt = this.tiles.get(this.panel.t.inst.uid); const shown = !!this.panel.anchor;
+      Object.assign(nt.data, this.panel.t.data);
+      if (shown && this.panel.kind === 'widget') this.openPanel(nt); else { this.panel.t = nt; this._renderPanel(true); }
+    }
   }
 
   // ---------------- glass surface fades ----------------
@@ -230,7 +235,8 @@ export class DockView {
       const c = this.icons.get(p);
       if (c) { img.src = c; continue; }
       if (c === null) continue;
-      this.api.icon(p, 64).then((url) => { this.icons.set(p, url || null); if (url) for (const i of this.root.querySelectorAll('img[data-icon]')) if (i.dataset.icon === p) i.src = url; });
+      const retry = () => setTimeout(() => { if (this.icons.get(p) === null) this.icons.delete(p); }, 15000); // helper busy: ask again later
+      this.api.icon(p, 64).then((url) => { if (!url) return retry(); this.icons.set(p, url); for (const i of this.root.querySelectorAll('img[data-icon]')) if (i.dataset.icon === p) i.src = url; }, retry);
     }
   }
 

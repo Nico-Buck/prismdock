@@ -378,6 +378,8 @@ public static class PD {
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int v, int size);
     public static void RoundCorners(long h) { int round = 2; DwmSetWindowAttribute(new IntPtr(h), 33, ref round, 4); }
     public static int[] FullscreenFg() {
+        // Windows 10 tablet mode shows every app maximized without a caption: that is not full screen
+        try { object tm = Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\ImmersiveShell", "TabletMode", 0); if (tm is int && (int)tm == 1) return new int[0]; } catch { }
         var mons = new List<RECT>();
         EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, delegate(IntPtr hm, IntPtr dc, IntPtr pr, IntPtr d) {
             var mi = new MONITORINFO(); mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
@@ -546,7 +548,7 @@ public static class PD {
     public static int Taskbar(bool show, int restoreState) {
         IntPtr t = FindWindow("Shell_TrayWnd", null);
         if (!show) {
-            if (!TbHidden && t != IntPtr.Zero) OrigTbState = TbState(t);
+            if (!TbHidden && t != IntPtr.Zero) OrigTbState = restoreState >= 0 ? restoreState : TbState(t);
             TbHidden = true;
             // auto-hide is a single setting for all taskbars; it must be on so hidden taskbars free their work area
             if (t != IntPtr.Zero && (TbState(t) & 1) == 0) SetTbState(t, TbState(t) | 1);
@@ -784,8 +786,9 @@ function Invoke-Cmd($cmd, $a) {
         'fullscreen' { , ([PD]::FullscreenFg()) }
         'appbar' { , ([PD]::AppBar([long]$a.hwnd, [bool]$a.on, [int]$a.edge, [int]$a.l, [int]$a.t, [int]$a.r, [int]$a.b)) }
         'icon' { [PD]::Icon([string]$a.path, [int]$a.size) }
-        'media' { Get-Media ([string]$a.dir) }
-        'mediaCmd' { Invoke-MediaCmd $a.action $a.position }
+        # a failed WinRT call can leave a stale session manager behind: ask for a fresh one next time
+        'media' { try { Get-Media ([string]$a.dir) } catch { $script:mediaMgr = $null; throw } }
+        'mediaCmd' { try { Invoke-MediaCmd $a.action $a.position } catch { $script:mediaMgr = $null; throw } }
         'radios' { , @(Get-Radios | ForEach-Object { @{ name = $_.Name; kind = [string]$_.Kind; state = [string]$_.State } }) }
         'setRadio' {
             $r = Get-Radios | Where-Object { [string]$_.Kind -eq $a.kind } | Select-Object -First 1

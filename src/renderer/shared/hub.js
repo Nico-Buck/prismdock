@@ -73,7 +73,7 @@ export class Hub {
     if (!t) return;
     clearTimeout(t.timer); t.timer = null;
     if (t.busy) { t.again = true; return; }
-    if (!this.paused) {
+    if (!this.paused || topic === 'clock') { // the clock drives Pomodoro and Timer alerts, also while hidden
       t.busy = true;
       const force = t.force; t.force = false;
       try {

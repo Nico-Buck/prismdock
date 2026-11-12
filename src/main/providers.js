@@ -81,7 +81,7 @@ const sys = {
   recycle: () => cached('recycle', 5000, () => native.call('recycle')),
   // the cover is written to <userData>/media by the helper (only when it changes) and served as app://prism/__media/<file>
   media: () => cached('media', 900, async () => {
-    const m = await native.call('media', { dir: mediaDir() }).catch(() => ({ active: false }));
+    const m = await native.call('media', { dir: mediaDir() }, 12000).catch(() => ({ active: false }));
     if (m.cover) m.coverUrl = 'app://prism/__media/' + m.cover;
     return m;
   }),
@@ -128,7 +128,8 @@ async function icon(p, size = 96) {
 async function windows() {
   return cached('windows', 1200, async () => {
     const list = await native.call('windows', { selfPid: process.pid });
-    return list.filter((w) => w.exe && !/\\(ApplicationFrameHost|ShellExperienceHost|SearchHost|StartMenuExperienceHost)\.exe$/i.test(w.exe));
+    // shell processes that own visible windows but are not apps (Windows 11 and Windows 10 names)
+    return list.filter((w) => w.exe && !/\\(ApplicationFrameHost|ShellExperienceHost|SearchHost|SearchUI|SearchApp|StartMenuExperienceHost|TextInputHost|LockApp|WindowsInternal\.ComposableShell\.Experiences\.TextInput\.InputApp)\.exe$/i.test(w.exe));
   });
 }
 

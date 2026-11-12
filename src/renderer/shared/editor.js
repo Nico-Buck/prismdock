@@ -54,7 +54,7 @@ export class EditorMixin {
         <button class="chip ghost" data-ed="newLayout" data-tip="New layout from the current one">${icon('plus', 12)} New</button>
         <span class="ed-sp"></span>
         ${p.renaming ? `<input class="inp ed-name" data-ed-name value="${esc(profiles.find((x) => x.id === c.activeProfile)?.name || '')}" autofocus><button class="btn" data-ed="renameOk">Save name</button>`
-          : `<button class="btn icon" data-ed="rename" data-tip="Rename layout">${icon('edit', 13)}</button><button class="btn icon" data-ed="duplicate" data-tip="Duplicate layout">${icon('copy', 13)}</button><button class="btn icon danger" data-ed="deleteLayout" data-tip="Delete layout" ${profiles.length <= 1 ? 'disabled' : ''}>${icon('trash', 13)}</button>`}</div>
+          : `<button class="btn icon" data-ed="rename" data-tip="Rename layout">${icon('edit', 13)}</button><button class="btn icon" data-ed="duplicate" data-tip="Duplicate layout">${icon('copy', 13)}</button><button class="btn icon danger" data-ed="deleteLayout" data-tip="${this._confirmDelLayout ? 'Click again to delete this layout' : 'Delete layout'}" ${this._confirmDelLayout ? 'style="background:#ff453a;color:#fff"' : ''} ${profiles.length <= 1 ? 'disabled' : ''}>${icon('trash', 13)}</button>`}</div>
       <div class="pn-tabs">${tabs.map(([k, ic, l]) => `<button class="${p.tab === k ? 'on' : ''}" data-ed="tab" data-v="${k}">${icon(ic, 13)} ${l}</button>`).join('')}</div>
       <div class="ed-body">${body}</div></div>`;
     const b = this.panelBody.querySelector('.ed-body'); if (b && scroll) b.scrollTop = scroll;
@@ -127,6 +127,7 @@ export class EditorMixin {
     const d = el.dataset; const act = d.ed; const api = this.api;
     const sel = this.selected; const list = this.cfg.widgets; const idx = list.findIndex((w) => w.uid === sel);
     if (act !== 'reset') this._confirmReset = false;
+    if (act !== 'deleteLayout') this._confirmDelLayout = false;
     switch (act) {
       case 'done': return this.closeEditor();
       case 'tab': this.panel.tab = d.v; return this._renderEditor();
@@ -136,7 +137,10 @@ export class EditorMixin {
       case 'duplicate': return api.config.layout('create', { name: `${(this.cfg.profiles || []).find((x) => x.id === this.cfg.activeProfile)?.name || 'Layout'} copy` });
       case 'rename': this.panel.renaming = true; return this._renderEditor();
       case 'renameOk': { const v = this.panelBody.querySelector('[data-ed-name]')?.value.trim(); this.panel.renaming = false; if (v) await api.config.layout('rename', { id: this.cfg.activeProfile, name: v }); return this._renderEditor(); }
-      case 'deleteLayout': return api.config.layout('delete', { id: this.cfg.activeProfile }).catch((e) => this.toast(e.message));
+      case 'deleteLayout':
+        if (!this._confirmDelLayout) { this._confirmDelLayout = true; return this._renderEditor(); }
+        this._confirmDelLayout = false;
+        return api.config.layout('delete', { id: this.cfg.activeProfile }).catch((e) => this.toast(e.message));
       case 'select': return this.selectTile(d.v);
       case 'deselect': return this.selectTile(this.selected);
       case 'size': return this.saveWidget(sel, { size: d.v });
