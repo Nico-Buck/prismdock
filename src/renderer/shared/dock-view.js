@@ -7,7 +7,7 @@ import { GlassEngine } from './glass.js';
 import { morph } from './morph.js';
 import { EditorMixin } from './editor.js';
 import { applyTheme, THEMES } from './themes.js';
-import { icon, esc } from './ui.js';
+import { icon, esc, SIZE_LABEL } from './ui.js';
 import { registry, defaultsFor } from '../widgets/index.js';
 
 export class DataStore {
@@ -28,7 +28,6 @@ export class DataStore {
 }
 
 const SPACER = { type: 'spacer', name: 'Spacer', cat: 'apps', icon: 'minus', desc: 'Flexible space – pushes widgets apart in full-width mode.', sizes: ['m'], size: 'm', topics: [], bare: true, noPanel: true, tile: () => '' };
-const SIZE_LABEL = { s: 'Small', m: 'Medium', l: 'Large' };
 const uidFor = (type) => `${type.replace(/[^a-z0-9]/gi, '')}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
 export class DockView {
@@ -160,7 +159,7 @@ export class DockView {
     for (const topic of topics) {
       t.unsubs.push(this.hub.subscribe(topic, (v) => {
         t.data[topic] = v;
-        if (topic === 'clock' && def.tick) def.tick(t.ctx);
+        if (topic === 'clock' && def.tick && !this.preview && this.timerOwner !== false) def.tick(t.ctx);
         this._scheduleRender(t);
       }));
     }
@@ -269,24 +268,24 @@ export class DockView {
   async openPanel(t) {
     if (t.def.noPanel || this.editing) return;
     this.closeCtx();
-    const same = this.panel?.t === t;
-    if (this.panel && !same) this._unsubPanel();
+    // the previous panel's subscriptions always end here, also when the same tile opens again
+    if (this.panel) this._unsubPanel();
     for (const x of this.tiles.values()) x.el.classList.toggle('open', x === t);
-    this.panel = { t, kind: 'widget', unsubs: [] };
+    const p = this.panel = { t, kind: 'widget', unsubs: [] };
     for (const topic of t.def.panelTopics || []) {
       if ((t.def.topics || []).includes(topic)) continue;
       this.panel.unsubs.push(this.hub.subscribe(topic, (v) => { t.data[topic] = v; this._renderPanel(); }));
     }
     if (t.def.panelLive === 'fast') this.panel.unsubs.push(this._fastTicker(t));
     this.panelEl.style.setProperty('--pw', (t.def.panelWidth || 320) + 'px');
-    if (t.def.panelLoad) { this.panelBody.innerHTML = '<div class="empty">Loading…</div>'; this._showPanel(t.el); await t.def.panelLoad(t.ctx); }
+    if (t.def.panelLoad) { this.panelBody.innerHTML = '<div class="empty">Loading…</div>'; this._showPanel(t.el); await t.def.panelLoad(t.ctx); if (this.panel !== p) return; } // closed or replaced while loading
     this._renderPanel(true);
     this._showPanel(t.el);
     if (!this.preview) this.api.dock.focus();
     setTimeout(() => this.panelBody.querySelector('[autofocus]')?.focus(), 60);
   }
   _fastTicker() { let on = true; const f = () => { if (!on) return; this._renderPanel(); setTimeout(f, 100); }; f(); return () => { on = false; }; }
-  _unsubPanel() { this.panel?.unsubs?.forEach((u) => u()); }
+  _unsubPanel() { const u = this.panel?.unsubs; if (u) { this.panel.unsubs = []; u.forEach((f) => f()); } }
 
   _renderPanel(force = false) {
     const p = this.panel; if (!p?.t) return;
@@ -304,6 +303,7 @@ export class DockView {
   }
 
   _showPanel(anchor) {
+    if (!this.panel) return;
     this.panel.anchor = anchor;
     this._positionPanel();
     this._fade(this.panelEl, true);
@@ -527,7 +527,7 @@ export class DockView {
       if (this.cfg?.behavior.openOn !== 'hover' || this.editing) return;
       const t = this._tileOf(e.target);
       clearTimeout(this._hoverT);
-      if (t && !t.def.noPanel && this.panel?.t !== t) this._hoverT = setTimeout(() => this.openPanel(t), 380);
+      if (t && !t.def.noPanel && this.panel?.t !== t) this._hoverT = setTimeout(() => { if (this.panel?.t !== t) this.openPanel(t); }, 380);
     });
     this._bindDrag();
   }

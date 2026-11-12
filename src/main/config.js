@@ -100,9 +100,20 @@ const DEFAULTS = () => ({
 });
 const PROFILE_KEYS = ['widgets', 'layout'];
 
-// numbers that are not finite (NaN/null from a bad write) fall back to their defaults
+const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
+
+// Repairs what a bad write, a hand edit or an old export can leave behind: sections that are not objects,
+// lists that are not arrays and numbers that are not finite fall back to their defaults.
 function sanitize(c) {
   const d = DEFAULTS();
+  for (const [sec, v] of Object.entries(d)) {
+    if (isObj(v) && !isObj(c[sec])) c[sec] = v;
+    else if (Array.isArray(v) && !Array.isArray(c[sec])) c[sec] = v;
+  }
+  if (!isObj(c.performance.intervals)) c.performance.intervals = d.performance.intervals;
+  c.widgets = c.widgets.filter((w) => isObj(w) && typeof w.type === 'string');
+  for (const w of c.widgets) { if (!w.uid) w.uid = uid(w.type); if (!isObj(w.settings)) w.settings = {}; }
+  c.profiles = c.profiles.filter((p) => isObj(p) && p.id && Array.isArray(p.widgets));
   for (const sec of ['layout', 'appearance', 'behavior']) for (const [k, v] of Object.entries(d[sec])) if (typeof v === 'number' && !Number.isFinite(c[sec]?.[k])) c[sec][k] = v;
   for (const [k, v] of Object.entries(d.performance.intervals)) if (!Number.isFinite(c.performance?.intervals?.[k])) c.performance.intervals[k] = v;
   return c;
@@ -160,27 +171,35 @@ class Store {
   constructor() {
     this._timers = {};
     this.firstRun = !fs.existsSync(FILE('config.json'));
-    const raw = readJson('config.json', {});
+    const raw0 = readJson('config.json', {});
+    const raw = isObj(raw0) ? raw0 : {};
     const wasOld = (raw.version || 1) < 4 && Object.keys(raw).length > 0;
     this.config = sanitize(deepMerge(DEFAULTS(), migrate(raw)));
     this._ensureProfiles();
-    this.data = readJson('data.json', {});
+    const data = readJson('data.json', {});
+    this.data = isObj(data) ? data : {};
     this.secrets = this._loadSecrets();
     if (wasOld) this.saveConfig(); // persist the migrated config right away
   }
-  _debounced(name, fn) {
+  // a save can fail for a moment (antivirus or the indexer holds the file): retry instead of throwing
+  // inside a timer, which Electron would show as an error dialog
+  _debounced(name, fn, delay = 250, tries = 3) {
     clearTimeout(this._timers[name]);
-    this._timers[name] = setTimeout(fn, 250);
+    this._timers[name] = setTimeout(() => {
+      try { fn(); } catch (e) {
+        console.warn(`saving ${name} failed:`, e.code || e.message);
+        if (tries > 1) this._debounced(name, fn, 2000, tries - 1);
+      }
+    }, delay);
   }
   saveConfig() { this._debounced('config', () => writeJson('config.json', this.config)); }
   saveData() { this._debounced('data', () => writeJson('data.json', this.data)); }
   flush() {
     for (const t of Object.values(this._timers)) clearTimeout(t);
-    writeJson('config.json', this.config);
-    writeJson('data.json', this.data);
+    for (const [n, v] of [['config.json', this.config], ['data.json', this.data]]) try { writeJson(n, v); } catch (e) { console.warn('saving', n, 'failed:', e.code || e.message); }
   }
   patch(p) { this.config = sanitize(deepMerge(this.config, p)); if (PROFILE_KEYS.some((k) => k in p)) this._syncProfile(); this.saveConfig(); return this.config; }
-  replace(c) { this.config = deepMerge(DEFAULTS(), migrate(c)); this._ensureProfiles(); this.saveConfig(); return this.config; }
+  replace(c) { this.config = sanitize(deepMerge(DEFAULTS(), migrate(isObj(c) ? c : {}))); this._ensureProfiles(); this.saveConfig(); return this.config; }
   reset(section) {
     const d = DEFAULTS();
     if (section === 'layout') { this.config.layout = d.layout; this.config.widgets = d.widgets; this._syncProfile(); }
@@ -249,9 +268,11 @@ class Store {
     return { app: 'PrismDock', exportedAt: new Date().toISOString(), config: this.config, data: this.data };
   }
   importBundle(b) {
-    if (!b || b.app !== 'PrismDock' || !b.config) throw new Error('This is not a valid PrismDock configuration file');
-    this.config = deepMerge(DEFAULTS(), b.config);
-    if (b.data && typeof b.data === 'object') this.data = b.data;
+    if (!b || b.app !== 'PrismDock' || !isObj(b.config)) throw new Error('This is not a valid PrismDock configuration file');
+    // an export of an older version goes through the same migration and repair as a config on disk
+    this.config = sanitize(deepMerge(DEFAULTS(), migrate(JSON.parse(JSON.stringify(b.config)))));
+    this._ensureProfiles();
+    if (isObj(b.data)) this.data = b.data;
     this.saveConfig(); this.saveData();
     return this.config;
   }

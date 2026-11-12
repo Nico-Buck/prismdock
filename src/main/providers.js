@@ -119,7 +119,8 @@ async function icon(p, size = 96) {
   if (!url) {
     try { url = (await app.getFileIcon(p, { size: 'large' })).toDataURL(); } catch { url = null; }
   }
-  iconCache.set(key, url);
+  // a failed lookup (helper busy) is not remembered, so the icon appears on the next request
+  if (url) iconCache.set(key, url);
   return url;
 }
 
@@ -174,7 +175,7 @@ function startScreenTime(store) {
       if (f.idleMs > 120000 || !f.exe) return;
       const exe = path.basename(f.exe).replace(/\.exe$/i, '');
       const d = new Date();
-      const day = d.toISOString().slice(0, 10);
+      const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; // local, like the widget
       const st = (store.data.screentime ||= {});
       const rec = (st[day] ||= { total: 0, hours: Array(24).fill(0), apps: {}, paths: {} });
       rec.total += STEP;

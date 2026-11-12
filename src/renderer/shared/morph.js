@@ -45,9 +45,13 @@ function patchNode(a, b) {
   // form state lives in properties, not attributes
   if (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT') {
     if (a === document.activeElement && a.type !== 'range') return; // never fight the user's typing
+    if (a.tagName === 'TEXTAREA') { if (a.value !== b.value) a.value = b.value; return; } // its text is its content
     if (a.type === 'checkbox' || a.type === 'radio') a.checked = b.hasAttribute('checked');
-    else if (b.hasAttribute('value') && a.value !== b.getAttribute('value')) a.value = b.getAttribute('value');
+    else if (a.tagName === 'INPUT' && b.hasAttribute('value') && a.value !== b.getAttribute('value')) a.value = b.getAttribute('value');
     if (a.tagName !== 'SELECT') return;
+    patchChildren(a, b);
+    if (a.value !== b.value) a.value = b.value; // a select the user touched ignores 'selected' attributes
+    return;
   }
   patchChildren(a, b);
 }

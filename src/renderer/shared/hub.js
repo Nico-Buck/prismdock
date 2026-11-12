@@ -56,40 +56,45 @@ export class Hub {
 
   subscribe(topic, fn) {
     let t = this.topics.get(topic);
-    if (!t) { t = { subs: new Set(), timer: null, value: undefined, busy: false }; this.topics.set(topic, t); }
+    if (!t) { t = { subs: new Set(), timer: null, value: undefined, busy: false, again: false, force: false }; this.topics.set(topic, t); }
     t.subs.add(fn);
     if (t.value !== undefined) fn(t.value);
-    if (!t.timer) this._tick(topic);
+    if (!t.timer && !t.busy) this._tick(topic); // a fetch already in flight delivers to the new subscriber too
     return () => {
       t.subs.delete(fn);
       if (!t.subs.size) { clearTimeout(t.timer); this.topics.delete(topic); }
     };
   }
 
+  // Exactly one timer chain per topic: a tick requested while a fetch is in flight (refresh, resume, a
+  // pushed change) is remembered and runs right after it, instead of starting a second chain.
   async _tick(topic) {
     const t = this.topics.get(topic);
     if (!t) return;
-    if (!this.paused && !t.busy) {
+    clearTimeout(t.timer); t.timer = null;
+    if (t.busy) { t.again = true; return; }
+    if (!this.paused) {
       t.busy = true;
+      const force = t.force; t.force = false;
       try {
-        const v = await this.fetch(topic);
+        const v = force && topic.startsWith('integ:') ? await this.api.integration(topic.slice(6), { refresh: true }) : await this.fetch(topic);
         t.value = v;
         for (const fn of t.subs) { try { fn(v); } catch (e) { console.error(topic, e); } }
       } catch (e) {
         if (topic !== 'clock') console.warn('hub', topic, e.message);
       } finally { t.busy = false; }
     }
-    if (this.topics.get(topic) === t) t.timer = setTimeout(() => this._tick(topic), this.interval(topic));
+    if (this.topics.get(topic) !== t) return;
+    if (t.again) { t.again = false; this._tick(topic); return; }
+    t.timer = setTimeout(() => this._tick(topic), this.interval(topic));
   }
 
+  // fetch now; online services bypass their cache
   refresh(topic) {
     const t = this.topics.get(topic);
     if (!t) return;
-    clearTimeout(t.timer);
-    if (topic.startsWith('integ:')) {
-      t.busy = true;
-      this.api.integration(topic.slice(6), { refresh: true }).then((v) => { t.value = v; for (const fn of t.subs) fn(v); }).finally(() => { t.busy = false; t.timer = setTimeout(() => this._tick(topic), this.interval(topic)); });
-    } else this._tick(topic);
+    if (topic.startsWith('integ:')) t.force = true;
+    this._tick(topic);
   }
 
   _mediaIdle() { const m = this.topics.get('media')?.value; return !m?.active || m.status !== 'Playing'; }
@@ -98,6 +103,6 @@ export class Hub {
   setPaused(p) {
     if (p === this.paused) return;
     this.paused = p;
-    if (!p) for (const [topic, t] of this.topics) { clearTimeout(t.timer); this._tick(topic); } // cached values for online services, no forced refresh
+    if (!p) for (const topic of this.topics.keys()) this._tick(topic); // cached values for online services, no forced refresh
   }
 }

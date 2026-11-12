@@ -54,14 +54,22 @@ function connect() {
 
 function disconnect() { token = null; tokenExp = 0; store.setSecret('spotify.refresh', ''); }
 
+// one refresh at a time: Spotify rotates refresh tokens, and two parallel refreshes with the same one
+// (player + queue are requested together) could leave a revoked token stored
+let refreshing = null;
 async function accessToken() {
   if (token && Date.now() < tokenExp) return token;
   const refresh = store.getSecret('spotify.refresh');
   if (!refresh || !clientId()) return null;
-  const t = await form('https://accounts.spotify.com/api/token', { grant_type: 'refresh_token', refresh_token: refresh, client_id: clientId() });
-  token = t.access_token; tokenExp = Date.now() + (t.expires_in - 60) * 1000;
-  if (t.refresh_token) store.setSecret('spotify.refresh', t.refresh_token); // Spotify rotates refresh tokens
-  return token;
+  refreshing ||= (async () => {
+    try {
+      const t = await form('https://accounts.spotify.com/api/token', { grant_type: 'refresh_token', refresh_token: refresh, client_id: clientId() });
+      token = t.access_token; tokenExp = Date.now() + (t.expires_in - 60) * 1000;
+      if (t.refresh_token) store.setSecret('spotify.refresh', t.refresh_token);
+      return token;
+    } finally { refreshing = null; }
+  })();
+  return refreshing;
 }
 
 async function api(path, opts = {}) {
@@ -69,6 +77,7 @@ async function api(path, opts = {}) {
   if (!tk) throw Object.assign(new Error('Not connected'), { code: 'NOCONN' });
   const r = await fetch('https://api.spotify.com/v1' + path, { ...opts, headers: { Authorization: `Bearer ${tk}`, ...(opts.headers || {}) } });
   if (r.status === 204) return null;
+  if (r.status === 401) { token = null; tokenExp = 0; } // revoked or expired early: refresh on the next call
   const j = await r.json().catch(() => null);
   if (!r.ok) throw new Error(j?.error?.message || `${r.status} ${r.statusText}`);
   return j;

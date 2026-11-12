@@ -352,11 +352,22 @@ document.addEventListener('click', async (e) => {
   if (d.delsecret) { secretKeys = await api.secrets.set(d.delsecret, ''); toast('Key removed'); return go(section); }
   if (d.test) {
     results[d.test] = 'Testing…'; go(section);
-    const r = await api.integration(d.test, { refresh: true });
-    results[d.test] = r.connected ? `✓ Connected${r.login ? ' as ' + r.login : r.name ? ' · ' + r.name : r.city ? ' · ' + r.city : r.user ? ' · ' + r.user : ''}${r.events ? ` · ${r.events.length} events` : ''}${r.total !== undefined ? ` · ${Math.round(r.total)} ${r.currency || ''}` : ''}` : `✗ ${r.error || r.reason || 'Not connected'}`;
+    // escaped: an error can carry a server's HTML page (wrong domain, captive portal)
+    try {
+      const r = await api.integration(d.test, { refresh: true });
+      results[d.test] = esc(r.connected ? `✓ Connected${r.login ? ' as ' + r.login : r.name ? ' · ' + r.name : r.city ? ' · ' + r.city : r.user ? ' · ' + r.user : ''}${r.events ? ` · ${r.events.length} events` : ''}${r.total !== undefined ? ` · ${Math.round(r.total)} ${r.currency || ''}` : ''}` : `✗ ${r.error || r.reason || 'Not connected'}`);
+    } catch (err) { results[d.test] = esc(`✗ ${err.message}`); }
     return go(section);
   }
 });
+// a number field's value within its min/max, or null while it is empty or invalid
+function numValue(el) {
+  if (el.value === '' || !Number.isFinite(Number(el.value))) return null;
+  let n = Number(el.value);
+  if (el.min !== '') n = Math.max(Number(el.min), n);
+  if (el.max !== '') n = Math.min(Number(el.max), n);
+  return n;
+}
 document.addEventListener('input', (e) => {
   const el = e.target; const d = el.dataset;
   if (el.type === 'range' && el.closest('.range')) {
@@ -364,14 +375,16 @@ document.addEventListener('input', (e) => {
     el.nextElementSibling.textContent = fmtVal(el.value, Number(el.step)) + (d.unit || '');
   }
   if (d.path) {
-    if (el.type === 'range' || d.kind === 'num') return set(d.path, Number(el.value), 30);
+    if (el.type === 'range' || d.kind === 'num') { const n = numValue(el); return n === null ? undefined : set(d.path, n, 30); }
     if (el.type === 'color') { const t = el.parentElement.querySelector('.in'); if (t) t.value = el.value; return set(d.path, el.value, 30); }
     if (d.kind === 'text') { if (el.closest('.color') && !/^#[0-9a-f]{6}$/i.test(el.value)) return; return set(d.path, el.value, 450); }
   }
   if (d.wset) {
-    const [uid, key] = d.wset.split('|'); const w = cfg.widgets.find((x) => x.uid === uid);
-    const v = d.kind === 'num' ? Number(el.value) : el.value;
-    clearTimeout(el._t); el._t = setTimeout(() => api.config.patch({ widgets: cfg.widgets.map((x) => (x.uid === uid ? { ...x, settings: { ...(w.settings || {}), [key]: v } } : x)) }), el.tagName === 'SELECT' || el.type === 'color' ? 0 : 450);
+    const [uid, key] = d.wset.split('|');
+    const v = d.kind === 'num' ? numValue(el) : el.value;
+    if (v === null) return; // half-typed number: wait for a valid one
+    // the current settings are read when the patch is sent, so two quick edits in a row both survive
+    clearTimeout(el._t); el._t = setTimeout(() => api.config.patch({ widgets: cfg.widgets.map((x) => (x.uid === uid ? { ...x, settings: { ...(x.settings || {}), [key]: v } } : x)) }), el.tagName === 'SELECT' || el.type === 'color' ? 0 : 450);
   }
   if (d.cfield) { const [id, k] = d.cfield.split('|'); clearTimeout(el._t); el._t = setTimeout(() => api.config.patch({ customWidgets: cfg.customWidgets.map((c) => (c.id === id ? { ...c, [k]: el.value } : c)) }), el.tagName === 'SELECT' || el.type === 'color' ? 0 : 450); }
 });
@@ -397,8 +410,10 @@ content.addEventListener('dragover', (e) => { const r = e.target.closest('.wrow'
 content.addEventListener('dragend', () => { dragUid = null; content.querySelectorAll('.wrow').forEach((x) => x.classList.remove('over', 'dragging')); });
 content.addEventListener('drop', (e) => {
   const r = e.target.closest('.wrow'); if (!r || !dragUid) return; e.preventDefault();
-  const list = [...cfg.widgets]; const from = list.findIndex((w) => w.uid === dragUid); const [m] = list.splice(from, 1);
-  const to = list.findIndex((w) => w.uid === r.dataset.uid); list.splice(to, 0, m);
+  const list = [...cfg.widgets];
+  const from = list.findIndex((w) => w.uid === dragUid); const to = list.findIndex((w) => w.uid === r.dataset.uid);
+  if (from < 0 || to < 0 || from === to) { dragUid = null; return; } // dropped on itself, or the widget is gone
+  const [m] = list.splice(from, 1); list.splice(to, 0, m); // the target's index from before the removal: moving down reaches the end
   dragUid = null; api.config.patch({ widgets: list });
 });
 

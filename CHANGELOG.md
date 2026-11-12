@@ -10,7 +10,7 @@ versions follow [Semantic Versioning](https://semver.org).
 - Live volume: Core Audio pushes every change, the ring follows a headset wheel in ~10 ms.
 - Event-driven, per-monitor full-screen detection (browsers in full screen, YouTube, games).
 - New keys and service settings switch widgets from sample to live data immediately.
-- `npm test` unit tests, `npm run check:native`, CI on Windows.
+- `npm test` unit tests, `npm run check:native`, `npm run check:names`, CI on Windows.
 
 ### Changed
 - App redesigned in the dock's design language: floating glass sidebar, round window corners,
@@ -26,6 +26,22 @@ versions follow [Semantic Versioning](https://semver.org).
 - Spotify queue and playlist covers were blocked by the Content-Security-Policy.
 - Play/pause icons now change immediately on click and sit centred in their buttons.
 - The dock reappeared over a full-screen video when another monitor got focus.
+- Start with Windows did nothing for the portable build (it registered a temporary folder).
+- The taskbar setting could be lost after a reboot or crash, or stay hidden when quitting while the helper
+  was busy; the helper now gives it back on every exit path and re-applies it after a restart.
+- Window and monitor positions on scaled displays (125 %, 150 %) were read in the wrong units.
+- A frozen media player could hang the native helper; it now times out and the helper restarts itself.
+- Polling could run twice per topic after refreshes, slowly increasing CPU use over a session.
+- A damaged or hand-edited config.json, or an import of an old export, could stop PrismDock from starting.
+- Saving could show an error dialog while antivirus software held the file.
+- The Layout Editor stopped working after selecting a widget.
+- Integration test results were inserted as HTML; widget number fields could save 0 or empty values.
+- Two quick edits of widget settings lost the first one; dragging a widget to the end of the list failed.
+- Panels kept polling after being reopened or closed while loading; the glass stayed blank after a GPU reset.
+- Pomodoro and Timer notified once per monitor; today's revenue and late-evening screen time landed on the
+  wrong day; forecast weekdays were one day off west of UTC; a mistyped time zone broke World Clocks.
+- Spotify could lose its sign-in when two requests refreshed the token at once.
+- Long-running daily or weekly iCal series that started years ago did not show.
 
 ### Performance
 - Idle CPU −71 %, mouse-move CPU −49 %, idle memory −18 % compared with 1.2.0 (see README).

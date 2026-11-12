@@ -87,6 +87,15 @@ function createDock(display) {
   return win;
 }
 
+// Timers (Pomodoro, Timer) run in one dock only, or every monitor would notify: the main display's dock,
+// or the first dock when the main display has none.
+function timerOwner(d) {
+  const wanted = targetDisplays(store.config);
+  const owner = wanted.find((x) => x.id === screen.getPrimaryDisplay().id) || wanted[0];
+  return !!owner && owner.id === d.id;
+}
+const dockInfo = (d) => ({ ...displayInfo(d), timerOwner: timerOwner(d) });
+
 function layoutDocks() {
   const cfg = store.config;
   const wanted = targetDisplays(cfg);
@@ -95,9 +104,9 @@ function layoutDocks() {
   for (const d of wanted) {
     const win = docks.get(d.id) || createDock(d);
     win.setBounds(dockBounds(d, cfg, win));
-    win.webContents.send('dock:display', displayInfo(d));
+    win.webContents.send('dock:display', dockInfo(d));
     // a dock that hides itself reserves no space, like an auto-hide taskbar
-    appbar(win, cfg.behavior.reserveSpace && !autohideOn(cfg, d), d).then(() => { if (!win.isDestroyed()) { win.setBounds(dockBounds(d, cfg, win)); win.webContents.send('dock:display', displayInfo(d)); } });
+    appbar(win, cfg.behavior.reserveSpace && !autohideOn(cfg, d), d).then(() => { if (!win.isDestroyed()) { win.setBounds(dockBounds(d, cfg, win)); win.webContents.send('dock:display', dockInfo(d)); } });
   }
   setTaskbarHidden(cfg.behavior.hideTaskbar);
 }
@@ -167,7 +176,11 @@ function applyFullscreen() {
   }
 }
 native.on('fullscreen', (m) => { fsRects = m.rects || []; applyFullscreen(); });
-native.on('ready', () => { native.call('fswatch').catch(() => {}); native.call('volwatch').catch(() => {}); });
+native.on('ready', () => {
+  native.call('fswatch').catch(() => {}); native.call('volwatch').catch(() => {});
+  // a restarted helper starts without the hidden taskbar and the reserved strips: apply them again
+  if (store && (store.config.behavior.hideTaskbar || docks.size)) layoutDocks();
+});
 // live volume from Core Audio: coalesced to one update per frame, merged into the cached 'volume' value
 let volPush = null;
 native.on('volume', (m) => {
@@ -216,12 +229,21 @@ function integrationsChanged(names) {
   for (const n of names) { integrations.invalidate(n === 'calendar' ? 'ics' : n); providers.invalidate(n); }
   broadcast('integ:changed', names);
 }
+// The portable build runs from a folder in %TEMP% that is deleted when it exits; the login item must point
+// to the portable .exe itself (electron-builder passes its path), otherwise Windows starts nothing at login.
+function launcherPath() { return process.env.PORTABLE_EXECUTABLE_FILE || process.execPath; }
+function setStartWithWindows(on) {
+  if (!app.isPackaged) return; // `npm start` would register electron.exe
+  try {
+    // same registry value as older versions (named after the app), so a stale temp path is overwritten
+    app.setLoginItemSettings({ openAtLogin: on, path: launcherPath(), args: ['--autostart'] });
+  } catch (e) { console.warn('start with Windows:', e.message); }
+}
 function applyConfig(prev) {
   const c = store.config;
   if (prev) integrationsChanged(Object.keys(c.integrations).filter((k) => JSON.stringify(prev.integrations?.[k]) !== JSON.stringify(c.integrations[k])).map((k) => INTEG_NAME[k] || k));
-  if (!prev || prev.behavior.startWithWindows !== c.behavior.startWithWindows) {
-    if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: c.behavior.startWithWindows, path: process.execPath });
-  }
+  // written at every start too, so the entry follows the exe when it is moved or updated
+  if (!prev || prev.behavior.startWithWindows !== c.behavior.startWithWindows) setStartWithWindows(c.behavior.startWithWindows);
   if (!prev || JSON.stringify(prev.layout) !== JSON.stringify(c.layout) || JSON.stringify(prev.behavior) !== JSON.stringify(c.behavior)) layoutDocks();
   if (c.performance.screenTime) providers.startScreenTime(store); else providers.stopScreenTime();
   watchFullscreen();
@@ -297,7 +319,7 @@ function registerIpc() {
   ipcMain.handle('display:get', (e) => {
     const w = BrowserWindow.fromWebContents(e.sender);
     const d = screen.getAllDisplays().find((x) => x.id === w?.displayId) || screen.getDisplayMatching(w.getBounds());
-    return { ...displayInfo(d), window: w.getBounds() };
+    return { ...dockInfo(d), window: w.getBounds() };
   });
   ipcMain.on('dock:focus', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.focus(); });
   ipcMain.on('dock:blurSelf', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.blur(); });

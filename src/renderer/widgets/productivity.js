@@ -1,6 +1,8 @@
 import { icon, ring, bar, esc, fmtDur, fmtClock, fmtDate, fmtTimeShort, relTime, C, WEEKDAYS, WEEKDAYS_LONG, MONTHS, MONTHS_LONG } from '../shared/ui.js';
 import { barChart, sparkBars } from '../shared/graph.js';
 
+// Pomodoro lengths from the widget settings, never 0 or empty (that would end every round at once)
+const pnum = (ctx, k, d) => Math.max(1, Math.round(Number(ctx.s[k])) || d);
 const id = () => Math.random().toString(36).slice(2, 10);
 const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const P = (ctx, n) => Math.round(n * ctx.u);
@@ -46,7 +48,7 @@ function monthGrid(date, events) {
 // --- pomodoro / timer / stopwatch state (persisted so it survives restarts) ---
 function pomoState(ctx) { return ctx.store.get('pomodoro', { phase: 'idle', endsAt: 0, remaining: 0, round: 1, paused: false }); }
 function pomoRemaining(st, ctx) {
-  if (st.phase === 'idle') return ctx.s.focus * 60;
+  if (st.phase === 'idle') return pnum(ctx, 'focus', 25) * 60;
   return st.paused ? st.remaining : Math.max(0, (st.endsAt - Date.now()) / 1000);
 }
 const dayTile = (now) => `<span class="glyph-tile" style="flex-direction:column;gap:calc(2px*var(--u))"><span class="t-cap red">${WEEKDAYS[now.getDay()]}</span><span style="font-size:calc(18px*var(--fu));font-weight:500;line-height:1" class="num">${now.getDate()}</span></span>`;
@@ -87,6 +89,7 @@ export default [
         const p = el.closest('.pn-sec'); const v = (k) => p.querySelector(`[data-k=${k}]`).value;
         if (!v('title').trim()) return;
         const start = new Date(`${v('date')}T${v('time') || '09:00'}`).getTime();
+        if (!Number.isFinite(start)) return; // date field cleared
         const events = [...ctx.store.get('events', []), { id: id(), title: v('title').trim(), start, end: start + 3600e3, color: EV_COLORS[Math.floor(Math.random() * EV_COLORS.length)] }];
         ctx.store.set('events', events); ctx.rerender(true);
       },
@@ -161,9 +164,9 @@ export default [
       const st = pomoState(ctx);
       if (st.phase !== 'idle' && !st.paused && Date.now() >= st.endsAt) {
         const focusDone = st.phase === 'focus';
-        const long = focusDone && st.round % ctx.s.rounds === 0;
-        const next = focusDone ? { phase: 'break', endsAt: Date.now() + (long ? ctx.s.longBrk : ctx.s.brk) * 60e3, round: st.round, paused: false }
-          : { phase: 'focus', endsAt: Date.now() + ctx.s.focus * 60e3, round: st.round + 1, paused: false };
+        const long = focusDone && st.round % pnum(ctx, 'rounds', 4) === 0;
+        const next = focusDone ? { phase: 'break', endsAt: Date.now() + (long ? pnum(ctx, 'longBrk', 15) : pnum(ctx, 'brk', 5)) * 60e3, round: st.round, paused: false }
+          : { phase: 'focus', endsAt: Date.now() + pnum(ctx, 'focus', 25) * 60e3, round: st.round + 1, paused: false };
         ctx.store.set('pomodoro', next);
         if (focusDone && !st.skipped) { const log = ctx.store.get('pomodoroLog', {}); log[dayKey()] = (log[dayKey()] || 0) + 1; ctx.store.set('pomodoroLog', log); }
         notify(focusDone ? 'Focus round complete' : 'Break is over', focusDone ? `Time for a ${long ? 'long' : 'short'} break.` : `Round ${next.round} starts now.`);
@@ -171,7 +174,7 @@ export default [
     },
     tile(ctx) {
       const st = pomoState(ctx); const rem = pomoRemaining(st, ctx);
-      const total = (st.phase === 'break' ? (st.round % ctx.s.rounds === 0 ? ctx.s.longBrk : ctx.s.brk) : ctx.s.focus) * 60;
+      const total = (st.phase === 'break' ? (st.round % pnum(ctx, 'rounds', 4) === 0 ? pnum(ctx, 'longBrk', 15) : pnum(ctx, 'brk', 5)) : pnum(ctx, 'focus', 25)) * 60;
       const col = st.phase === 'break' ? C.green : C.red;
       const label = st.phase === 'idle' ? `<span style="display:flex">${icon('play', P(ctx, 13))}</span>` : st.paused ? `<span style="display:flex">${icon('pause', P(ctx, 12))}</span>` : `<span style="font-size:calc(9.5px*var(--fu))">${Math.ceil(rem / 60)}</span>`;
       const r = smallRing(ctx, st.phase === 'idle' ? 100 : (rem / total) * 100, col, label);
@@ -182,13 +185,13 @@ export default [
       const st = pomoState(ctx); const rem = pomoRemaining(st, ctx);
       const log = ctx.store.get('pomodoroLog', {})[dayKey()] || 0;
       return `<div class="pn" style="align-items:center;text-align:center"><div class="pn-head" style="width:100%"><h3>${icon('timer', 18)} Pomodoro</h3><span class="sub">${log} ${log === 1 ? 'round' : 'rounds'} today</span></div>
-        <div class="pn-big" style="font-size:52px">${fmtDur(rem)}</div><div class="pn-muted">${st.phase === 'idle' ? `${ctx.s.focus} min focus · ${ctx.s.brk} min break` : st.phase === 'focus' ? `Focus · round ${st.round}` : 'Break'}</div>
+        <div class="pn-big" style="font-size:52px">${fmtDur(rem)}</div><div class="pn-muted">${st.phase === 'idle' ? `${pnum(ctx, 'focus', 25)} min focus · ${pnum(ctx, 'brk', 5)} min break` : st.phase === 'focus' ? `Focus · round ${st.round}` : 'Break'}</div>
         <div class="btns center"><button class="btn round xl ${st.phase !== 'idle' && !st.paused ? '' : 'primary'}" data-a="toggle" data-tip="${st.phase !== 'idle' && !st.paused ? 'Pause' : 'Start'}">${icon(st.phase !== 'idle' && !st.paused ? 'pause' : 'play', 20)}</button><button class="btn round lg" data-a="skip" data-tip="Skip" ${st.phase === 'idle' ? 'disabled' : ''}>${icon('next', 16)}</button><button class="btn round lg" data-a="reset" data-tip="Reset">${icon('refresh', 16)}</button></div></div>`;
     },
     on: {
       toggle: (ctx) => {
         const st = pomoState(ctx);
-        if (st.phase === 'idle') ctx.store.set('pomodoro', { phase: 'focus', endsAt: Date.now() + ctx.s.focus * 60e3, round: 1, paused: false });
+        if (st.phase === 'idle') ctx.store.set('pomodoro', { phase: 'focus', endsAt: Date.now() + pnum(ctx, 'focus', 25) * 60e3, round: 1, paused: false });
         else if (st.paused) ctx.store.set('pomodoro', { ...st, paused: false, endsAt: Date.now() + st.remaining * 1000 });
         else ctx.store.set('pomodoro', { ...st, paused: true, remaining: Math.max(0, (st.endsAt - Date.now()) / 1000) });
         ctx.rerender(true);
@@ -319,8 +322,8 @@ export default [
     settings: [{ key: 'span', label: 'Period', type: 'select', options: [['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year']], default: 'month' }],
     tile(ctx) {
       const now = new Date(); let a, b, label;
-      if (ctx.s.span === 'day') { a = new Date(now).setHours(0, 0, 0, 0); b = a + 864e5; label = 'Today'; }
-      else if (ctx.s.span === 'week') { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); a = d.getTime(); b = a + 7 * 864e5; label = 'Week'; }
+      if (ctx.s.span === 'day') { a = new Date(now).setHours(0, 0, 0, 0); b = new Date(a).setDate(new Date(a).getDate() + 1); label = 'Today'; }
+      else if (ctx.s.span === 'week') { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); a = d.getTime(); b = new Date(a).setDate(d.getDate() + 7); label = 'Week'; }
       else if (ctx.s.span === 'year') { a = new Date(now.getFullYear(), 0, 1).getTime(); b = new Date(now.getFullYear() + 1, 0, 1).getTime(); label = String(now.getFullYear()); }
       else { a = new Date(now.getFullYear(), now.getMonth(), 1).getTime(); b = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime(); label = MONTHS_LONG[now.getMonth()]; }
       const pct = ((now - a) / (b - a)) * 100;

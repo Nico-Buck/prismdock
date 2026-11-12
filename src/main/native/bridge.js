@@ -32,19 +32,31 @@ class NativeBridge extends EventEmitter {
 
   _start() {
     if (this.proc) return this.ready;
-    this.proc = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', nativeFile('helper.ps1')], {
+    // a helper that keeps dying right away (blocked by policy, broken install) must not respawn in a loop
+    if (Date.now() - (this.lastExit || 0) < 2000) return Promise.reject(new Error('helper restarting'));
+    const p = this.proc = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', nativeFile('helper.ps1')], {
       windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, PRISM_PARENT_PID: String(process.pid) },
     });
-    this.proc.stdout.setEncoding('utf8');
-    // never block the app on the helper: give up after 20 s and let calls fail instead of hanging
-    this.ready = new Promise((resolve, reject) => { this._resolveReady = resolve; setTimeout(() => reject(new Error('helper did not start')), 20000); });
+    this.buf = ''; this.timeouts = 0;
+    p.stdout.setEncoding('utf8');
+    // never block the app on the helper: give up after 20 s (and start over on the next call)
+    let startTimer;
+    this.ready = new Promise((resolve, reject) => {
+      this._resolveReady = () => { clearTimeout(startTimer); resolve(); };
+      this._rejectReady = reject;
+      startTimer = setTimeout(() => { reject(new Error('helper did not start')); try { p.kill(); } catch { /* gone */ } }, 20000);
+    });
     this.ready.catch(() => {});
-    this.proc.on('error', (e) => { if (process.env.PRISM_DEBUG) console.error('[helper] spawn failed', e); });
-    this.proc.stdout.on('data', (chunk) => this._onData(chunk));
-    this.proc.stderr.on('data', (d) => { if (process.env.PRISM_DEBUG) console.error('[helper]', String(d)); });
-    this.proc.on('exit', () => {
-      this.proc = null;
-      for (const p of this.pending.values()) p.reject(new Error('helper exited'));
+    p.on('error', (e) => { if (process.env.PRISM_DEBUG) console.error('[helper] spawn failed', e); });
+    p.stdin.on('error', () => { /* the helper died; 'exit' fails the pending calls */ });
+    p.stdout.on('data', (chunk) => { if (this.proc === p) this._onData(chunk); });
+    p.stderr.on('data', (d) => { if (process.env.PRISM_DEBUG) console.error('[helper]', String(d)); });
+    p.on('exit', () => {
+      clearTimeout(startTimer);
+      if (this.proc !== p) return; // an older helper we already replaced
+      this.proc = null; this.lastExit = Date.now(); this.buf = '';
+      this._rejectReady?.(new Error('helper exited'));
+      for (const c of this.pending.values()) { clearTimeout(c.timer); c.reject(new Error('helper exited')); }
       this.pending.clear();
     });
     return this.ready;
@@ -60,6 +72,7 @@ class NativeBridge extends EventEmitter {
       let msg;
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg.ready) { this._resolveReady(); this.emit('ready'); continue; }
+      this.timeouts = 0;
       if (msg.event) { this.emit(msg.event, msg); continue; }
       const p = this.pending.get(msg.id);
       if (!p) continue;
@@ -71,15 +84,30 @@ class NativeBridge extends EventEmitter {
 
   async call(cmd, args = {}, timeout = 8000) {
     await this._start();
+    const p = this.proc;
+    if (!p) throw new Error('helper exited');
     const id = this.seq++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`timeout: ${cmd}`)); }, timeout);
-      this.pending.set(id, { resolve, reject, timer });
-      this.proc.stdin.write(JSON.stringify({ id, cmd, args }) + '\n');
+      const timer = setTimeout(() => {
+        this.pending.delete(id); reject(new Error(`timeout: ${cmd}`));
+        // a helper that answers nothing for several calls in a row is stuck (e.g. a hung system call): restart it -
+        // unless a known long command (guard compile, GPU scan, DDC brightness) is still running ahead of them
+        const longRunning = [...this.pending.values()].some((c) => c.long);
+        if (!longRunning && ++this.timeouts >= 5 && this.proc === p) { this.timeouts = 0; try { p.kill(); } catch { /* gone */ } }
+      }, timeout);
+      this.pending.set(id, { resolve, reject, timer, long: timeout > 8000 });
+      try { p.stdin.write(JSON.stringify({ id, cmd, args }) + '\n'); } catch (e) { clearTimeout(timer); this.pending.delete(id); reject(e); }
     });
   }
 
-  stop() { if (this.proc) { this.proc.kill(); this.proc = null; } }
+  // closing stdin lets the helper leave its loop and run its cleanup (it gives the taskbar back);
+  // it is killed only if it does not exit by itself
+  stop() {
+    const p = this.proc; if (!p) return;
+    this.proc = null;
+    try { p.stdin.end(); } catch { /* gone */ }
+    setTimeout(() => { try { p.kill(); } catch { /* gone */ } }, 3000).unref();
+  }
 }
 
 module.exports = new NativeBridge();

@@ -9,6 +9,7 @@ npm install
 npm start      # run from source
 npm test       # unit tests
 npm run check:native   # compile the C# of the native helper and the guardian
+npm run check:names    # find names that are used but never defined or imported
 ```
 
 Use a separate profile while developing so your own settings stay untouched:
@@ -73,5 +74,5 @@ through the encrypted secret store.
 ## Pull requests
 
 1. Keep the change focused and describe how you tested it.
-2. `npm test` and `npm run check:native` must pass, and the app must start without console errors.
+2. `npm test`, `npm run check:names` and `npm run check:native` must pass, and the app must start without console errors.
 3. For UI changes, add a screenshot.

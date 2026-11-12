@@ -1,6 +1,6 @@
 // Layout Editor: arranging, adding and sizing widgets directly on the dock, bar spacing and saved
 // layouts. Mixed into DockView (see the end of dock-view.js); "this" is the DockView instance.
-import { icon, esc, slider } from './ui.js';
+import { icon, esc, slider, SIZE_LABEL } from './ui.js';
 import { CATEGORIES } from '../widgets/index.js';
 
 export class EditorMixin {
@@ -64,7 +64,8 @@ export class EditorMixin {
 
   _editorArrange() {
     const list = this.cfg.widgets;
-    const w = list.find((x) => x.uid === this.selected);
+    // a widget whose type no longer exists (old import) cannot be edited, only listed and removed
+    const w = list.find((x) => x.uid === this.selected && this.reg.get(x.type));
     const hint = `<div class="ed-hint">${icon('drag', 14)}<span><b>Drag</b> widgets on the bar to reorder them, or drag an empty spot to move the whole bar (release in the top half to dock it at the top). <b>Click</b> a widget to select it. The <b>size badge</b> cycles Small / Medium / Large, <b>×</b> removes it.</span></div>`;
     if (!w) {
       return `${hint}<div class="ed-list">${list.map((x, i) => { const d = this.reg.get(x.type); return `<button class="ed-item ${x.enabled ? '' : 'off'}" data-ed="select" data-v="${x.uid}"><span class="ed-pos">${i + 1}</span>${d?.brand ? '' : `<span class="dim" style="display:flex">${icon(d?.icon || 'grid', 14)}</span>`}<span class="grow">${esc(d?.name || x.type)}</span>${x.enabled ? '' : '<span class="kbd">hidden</span>'}</button>`; }).join('')}</div>`;

@@ -22,6 +22,8 @@ jobs:
         shell: bash
         run: |
           for f in $(git ls-files 'src/*.js' 'src/**/*.js'); do node --check "$f" || exit 1; done
+      - name: No undefined names
+        run: npm run check:names
       - name: Native code compiles
         run: npm run check:native
       - run: npm test

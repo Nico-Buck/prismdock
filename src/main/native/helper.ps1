@@ -370,6 +370,10 @@ public static class PD {
     // Monitors whose top window is full screen, as flat [l,t,r,b, l,t,r,b, ...]. Per monitor, not just the
     // foreground window: a video stays full screen on one display while you click on another.
     public static int ParentPid = 0;
+    // powershell.exe is DPI-unaware: on scaled monitors Windows would report window and monitor rects in
+    // virtual 96-DPI pixels, which never match Electron's physical ones. Per-monitor v2 gives real pixels.
+    [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
+    public static void InitDpi() { try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { } }
     // Windows 11 does not round frameless (custom title bar) windows on its own: ask DWM for round corners
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int v, int size);
     public static void RoundCorners(long h) { int round = 2; DwmSetWindowAttribute(new IntPtr(h), 33, ref round, 4); }
@@ -638,13 +642,15 @@ public static class PD {
 "@
 Add-Type -TypeDefinition $src -ReferencedAssemblies System.Drawing -Language CSharp
 [void][PD]::Cpu()
+[PD]::InitDpi()
 [PD]::Out = $script:stdout
 if ($env:PRISM_PARENT_PID) { [PD]::ParentPid = [int]$env:PRISM_PARENT_PID; [PD]::WatchParent([int]$env:PRISM_PARENT_PID) }
 
 # ---------- WinRT helpers ----------
 $asTaskOp = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
 $script:asStream = [System.IO.WindowsRuntimeStreamExtensions].GetMethods() | Where-Object { $_.Name -eq "AsStreamForRead" -and $_.GetParameters().Count -eq 1 } | Select-Object -First 1
-function Await($op, [Type]$t) { $task = $asTaskOp.MakeGenericMethod($t).Invoke($null, @($op)); [void]$task.Wait(4000); $task.Result }
+# a WinRT call that never completes (frozen media player) must not block the helper: .Result would wait forever
+function Await($op, [Type]$t) { $task = $asTaskOp.MakeGenericMethod($t).Invoke($null, @($op)); if (-not $task.Wait(4000)) { throw 'Windows did not answer in time' }; $task.Result }
 
 $script:mediaMgr = $null
 $script:thumbKey = ''

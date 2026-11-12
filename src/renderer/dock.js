@@ -10,6 +10,7 @@ const store = new DataStore(api);
 await store.load();
 const hub = new Hub(api, () => cfg);
 const view = new DockView(root, { api, hub, store, canvas: root.querySelector('.glass-canvas') });
+api.dock.display().then((d) => { view.timerOwner = d?.timerOwner !== false; });
 view.setConfig(cfg);
 
 api.config.onChange((c) => { cfg = c; view.setConfig(c); applyGlassSource(); updateSensor?.(); });
@@ -58,7 +59,7 @@ setInterval(async () => {
   edgeHits = inZone ? edgeHits + 1 : 0;
   if (edgeHits >= (view.sensorShared ? 2 : 1)) { edgeHits = 0; view._hovering = true; view._reveal(); watchLeave(); }
 }, 100);
-api.dock.onDisplay(async () => { display = await api.dock.display(); view.setDisplayKey(display?.key); updateSensor(); applyGlassSource(); });
+api.dock.onDisplay(async () => { display = await api.dock.display(); view.timerOwner = display?.timerOwner !== false; view.setDisplayKey(display?.key); updateSensor(); applyGlassSource(); });
 window.addEventListener('resize', async () => { display = await api.dock.display(); applyGlassSource(); });
 
 // ---------- click-through: only glass surfaces take the mouse ----------

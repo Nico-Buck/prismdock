@@ -103,6 +103,17 @@ export class GlassEngine {
     const gl = canvas.getContext('webgl', { premultipliedAlpha: true, alpha: true, antialias: false });
     this.gl = gl;
     if (!gl) return;
+    this._initGL();
+    // the GPU process can reset (driver update, sleep, TDR): rebuild everything instead of staying blank
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.texReady = false; if (this._raf) cancelAnimationFrame(this._raf); this._raf = null; });
+    canvas.addEventListener('webglcontextrestored', () => { this._box = null; this._initGL(); this.rebuildTexture(); });
+    this._loop = this._loop.bind(this);
+    new ResizeObserver(() => this.resize()).observe(canvas);
+    this.resize();
+  }
+
+  _initGL() {
+    const gl = this.gl;
     const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; };
     const prog = gl.createProgram();
     gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
@@ -124,9 +135,6 @@ export class GlassEngine {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this._loop = this._loop.bind(this);
-    new ResizeObserver(() => this.resize()).observe(canvas);
-    this.resize();
   }
 
   resize() {
@@ -144,7 +152,7 @@ export class GlassEngine {
 
   rebuildTexture() {
     const gl = this.gl;
-    if (!gl || !this.params) return;
+    if (!gl || gl.isContextLost() || !this.params) return;
     const r = this.canvas.getBoundingClientRect();
     const scale = 0.5; // texture at half resolution: it is blurred anyway
     const w = Math.max(2, Math.round(r.width * scale)), h = Math.max(2, Math.round(r.height * scale));
@@ -187,7 +195,7 @@ export class GlassEngine {
 
   draw() {
     const gl = this.gl;
-    if (!gl || !this.params || !this.texReady) return;
+    if (!gl || gl.isContextLost() || !this.params || !this.texReady) return;
     const p = this.params;
     const cr = this.canvas.getBoundingClientRect();
     const els = [...this.root.querySelectorAll('[data-glass]')].filter((el) => el.offsetParent !== null || el === document.body);

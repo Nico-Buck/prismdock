@@ -1,13 +1,19 @@
 import { icon, esc, fmtClock, fmtTimeShort, wmo, C, WEEKDAYS, WEEKDAYS_LONG, MONTHS, MONTHS_LONG } from '../shared/ui.js';
 
 const P = (ctx, n) => Math.round(n * ctx.u);
+// Open-Meteo days are plain dates ("2026-11-13"); new Date() would read them as UTC midnight, the day before west of UTC
+const localDay = (s) => new Date(s + 'T00:00');
+// a mistyped time zone ("Europe/Berln") must not break the whole tile: it falls back to local time
+const validTz = (tz) => { if (!tz) return true; try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; } };
 const tzParts = (tz) => {
   const d = new Date();
+  if (!validTz(tz)) tz = undefined;
   const f = new Intl.DateTimeFormat('en-GB', { timeZone: tz || undefined, hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false, weekday: 'short' });
   const p = Object.fromEntries(f.formatToParts(d).map((x) => [x.type, x.value]));
   return { h: Number(p.hour) % 24, m: Number(p.minute), s: Number(p.second), wd: p.weekday };
 };
 const tzOffset = (tz) => {
+  if (!validTz(tz)) return 'unknown time zone';
   const d = new Date();
   const a = new Date(d.toLocaleString('en-US', { timeZone: tz })); const b = new Date(d.toLocaleString('en-US'));
   const h = Math.round(((a - b) / 36e5) * 2) / 2;
@@ -59,7 +65,7 @@ function weatherPanel(ctx, { 'integ:weather': w }) {
     <div style="display:flex;align-items:center;gap:14px"><span style="font-size:54px;line-height:1">${x.glyph}</span><div><div class="pn-big">${Math.round(c.temperature_2m)}°</div><div class="pn-muted">${x.label} · feels like ${Math.round(c.apparent_temperature)}°</div></div></div>
     <div class="pn-grid c4"><div class="pn-stat"><b>${Math.round(c.wind_speed_10m)}</b><span>km/h wind</span></div><div class="pn-stat"><b>${c.relative_humidity_2m}%</b><span>Humidity</span></div><div class="pn-stat"><b>${w.daily.precipitation_probability_max?.[0] ?? 0}%</b><span>Rain</span></div><div class="pn-stat"><b style="font-size:15px">${fmtTimeShort(sr, h24)}</b><span>Sunrise</span></div></div>
     <div class="pn-sec"><h4>Next hours</h4><div style="display:flex;justify-content:space-between">${hours.filter((_, i) => i % 2 === 0).map((h) => `<div style="display:flex;flex-direction:column;align-items:center;gap:5px;font-size:12px"><span class="kbd">${h24 ? h.t.getHours() + 'h' : (h.t.getHours() % 12 || 12) + (h.t.getHours() < 12 ? 'a' : 'p')}</span><span style="font-size:18px">${wmo(h.code).glyph}</span><b>${Math.round(h.temp)}°</b><span class="kbd" style="color:${C.teal}">${h.pp}%</span></div>`).join('')}</div></div>
-    <div class="pn-sec"><h4>7 days</h4>${w.daily.time.map((t, i) => { const lo = w.daily.temperature_2m_min[i], hi = w.daily.temperature_2m_max[i]; const l = ((lo - dmin) / (dmax - dmin || 1)) * 100, r = ((hi - dmin) / (dmax - dmin || 1)) * 100; return `<div class="pn-row"><span style="width:44px" class="${i === 0 ? '' : 'dim'}">${i === 0 ? 'Today' : WEEKDAYS[new Date(t).getDay()]}</span><span style="width:24px;text-align:center">${wmo(w.daily.weather_code[i]).glyph}</span><span class="dim num" style="width:30px;text-align:right">${Math.round(lo)}°</span><span class="pbar" style="height:5px"><i style="left:${l}%;width:${r - l}%;background:linear-gradient(90deg,${C.teal},${C.orange})"></i></span><span class="num" style="width:30px">${Math.round(hi)}°</span></div>`; }).join('')}</div>
+    <div class="pn-sec"><h4>7 days</h4>${w.daily.time.map((t, i) => { const lo = w.daily.temperature_2m_min[i], hi = w.daily.temperature_2m_max[i]; const l = ((lo - dmin) / (dmax - dmin || 1)) * 100, r = ((hi - dmin) / (dmax - dmin || 1)) * 100; return `<div class="pn-row"><span style="width:44px" class="${i === 0 ? '' : 'dim'}">${i === 0 ? 'Today' : WEEKDAYS[localDay(t).getDay()]}</span><span style="width:24px;text-align:center">${wmo(w.daily.weather_code[i]).glyph}</span><span class="dim num" style="width:30px;text-align:right">${Math.round(lo)}°</span><span class="pbar" style="height:5px"><i style="left:${l}%;width:${r - l}%;background:linear-gradient(90deg,${C.teal},${C.orange})"></i></span><span class="num" style="width:30px">${Math.round(hi)}°</span></div>`; }).join('')}</div>
     <div class="pn-muted">Sunset ${fmtTimeShort(ss, h24)} · Data: Open-Meteo</div></div>`;
 }
 const weatherOn = { city: (ctx) => ctx.openSettings('integrations'), refresh: (ctx) => ctx.hub.refresh('integ:weather') };
@@ -189,7 +195,7 @@ export default [
     tile(ctx, { 'integ:weather': w }) {
       if (!w?.connected) return weatherTile(ctx, w, 'main');
       const dd = w.daily;
-      return `<div class="tin" style="gap:calc(12px*var(--u))">${[0, 1, 2, 3].map((i) => `<div class="col" style="align-items:center;gap:calc(4px*var(--u))"><span class="t-cap" style="color:${i ? 'var(--text-2)' : '#ff453a'}">${i ? WEEKDAYS[new Date(dd.time[i]).getDay()] : 'Today'}</span><span style="font-size:calc(17px*var(--u));line-height:1">${wmo(dd.weather_code[i]).glyph}</span><span class="t-val">${Math.round(dd.temperature_2m_max[i])}°<span class="dim" style="font-weight:500"> ${Math.round(dd.temperature_2m_min[i])}°</span></span></div>`).join('')}</div>`;
+      return `<div class="tin" style="gap:calc(12px*var(--u))">${[0, 1, 2, 3].map((i) => `<div class="col" style="align-items:center;gap:calc(4px*var(--u))"><span class="t-cap" style="color:${i ? 'var(--text-2)' : '#ff453a'}">${i ? WEEKDAYS[localDay(dd.time[i]).getDay()] : 'Today'}</span><span style="font-size:calc(17px*var(--u));line-height:1">${wmo(dd.weather_code[i]).glyph}</span><span class="t-val">${Math.round(dd.temperature_2m_max[i])}°<span class="dim" style="font-weight:500"> ${Math.round(dd.temperature_2m_min[i])}°</span></span></div>`).join('')}</div>`;
     },
     ...W,
   },

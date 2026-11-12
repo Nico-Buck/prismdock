@@ -23,7 +23,9 @@ async function http(url, opts = {}) {
   } finally { clearTimeout(t); }
 }
 const notConnected = (reason) => ({ connected: false, reason });
-const days = (n) => { const out = []; const d = new Date(); d.setHours(0, 0, 0, 0); for (let i = n - 1; i >= 0; i--) out.push(new Date(d - i * 864e5).toISOString().slice(0, 10)); return out; };
+// local calendar dates: toISOString() would give the UTC date, which drops today's sales east of UTC
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const days = (n) => { const out = []; const d = new Date(); d.setHours(12, 0, 0, 0); for (let i = n - 1; i >= 0; i--) { const x = new Date(d); x.setDate(d.getDate() - i); out.push(ymd(x)); } return out; };
 const series = (n, rows) => { const map = Object.fromEntries(days(n).map((k) => [k, 0])); for (const [date, v] of rows) if (date in map) map[date] += v; return Object.entries(map).map(([date, value]) => ({ date, value })); };
 
 // ---------- weather (Open-Meteo, no key needed) ----------
@@ -174,7 +176,7 @@ async function stripe() {
       const r = await http(`https://api.stripe.com/v1/balance_transactions?${q}`, { headers: { Authorization: `Bearer ${key}` } });
       for (const t of r.data) {
         if (t.type === 'charge' || t.type === 'payment' || t.type === 'refund' || t.type === 'payment_refund') {
-          rows.push([new Date(t.created * 1000).toISOString().slice(0, 10), t.net / 100]); currency = t.currency;
+          rows.push([ymd(new Date(t.created * 1000)), t.net / 100]); currency = t.currency;
         }
       }
       if (!r.has_more) break;
@@ -197,7 +199,7 @@ async function paypal() {
     const rows = (r.transaction_details || []).map((t) => {
       const i = t.transaction_info; currency = i.transaction_amount.currency_code;
       const fee = Number(i.fee_amount?.value || 0);
-      return [i.transaction_initiation_date.slice(0, 10), Number(i.transaction_amount.value) + fee];
+      return [ymd(new Date(i.transaction_initiation_date)), Number(i.transaction_amount.value) + fee];
     }).filter(([, v]) => v > 0);
     const s = series(30, rows);
     return { connected: true, currency, total: s.reduce((a, d) => a + d.value, 0), series: s };
@@ -211,7 +213,7 @@ async function shopify() {
     const host = domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
     const r = await http(`https://${host}/admin/api/2024-10/orders.json?status=any&limit=250&created_at_min=${encodeURIComponent(since)}&fields=created_at,total_price,currency,financial_status`, { headers: { 'X-Shopify-Access-Token': token } });
     let currency = 'EUR';
-    const rows = (r.orders || []).filter((o) => o.financial_status !== 'refunded' && o.financial_status !== 'voided').map((o) => { currency = o.currency; return [o.created_at.slice(0, 10), Number(o.total_price)]; });
+    const rows = (r.orders || []).filter((o) => o.financial_status !== 'refunded' && o.financial_status !== 'voided').map((o) => { currency = o.currency; return [ymd(new Date(o.created_at)), Number(o.total_price)]; });
     const s = series(30, rows);
     return { connected: true, currency, total: s.reduce((a, d) => a + d.value, 0), orders: rows.length, series: s };
   });
@@ -249,6 +251,13 @@ function parseIcs(text, from, to) {
     const until = e.rrule.UNTIL ? parseIcsDate(e.rrule.UNTIL) : Infinity; let count = e.rrule.COUNT ? Number(e.rrule.COUNT) : Infinity;
     const byday = e.rrule.BYDAY ? e.rrule.BYDAY.split(',').map((d) => ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'].indexOf(d.slice(-2))) : null;
     let t = new Date(e.start);
+    // an endless daily/weekly series from years ago would use up the iteration guard before reaching the
+    // shown range: without COUNT, jump close to the range first (whole intervals, so the phase is kept)
+    if (count === Infinity && (freq === 'DAILY' || freq === 'WEEKLY')) {
+      const step = (freq === 'DAILY' ? 1 : 7) * interval;
+      const skip = Math.floor((from - dur - t.getTime()) / (step * 864e5)) - 1;
+      if (skip > 0) t.setDate(t.getDate() + skip * step);
+    }
     for (let guard = 0; guard < 2000 && t.getTime() <= Math.min(to, until) && count > 0; guard++) {
       const candidates = [];
       if (freq === 'WEEKLY' && byday) {

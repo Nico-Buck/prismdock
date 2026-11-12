@@ -55,3 +55,13 @@ test('config.example.json matches the built-in defaults and holds no secrets', (
   const text = JSON.stringify(ex);
   assert.doesNotMatch(text, /"(token|secret|password|apiKey)"\s*:\s*"[^"]+"/i);
 });
+
+test('a damaged or hand-edited config is repaired instead of crashing the start', () => {
+  const c = sanitize(deepMerge(DEFAULTS(), migrate({ version: 4, layout: null, behavior: 'x', performance: { intervals: null }, widgets: [null, { type: 'clock' }, 5], profiles: 'no' })));
+  assert.equal(typeof c.layout.height, 'number');
+  assert.equal(typeof c.behavior.hideTaskbar, 'boolean');
+  assert.equal(c.performance.intervals.system, DEFAULTS().performance.intervals.system);
+  assert.equal(c.widgets.length, 1);
+  assert.ok(c.widgets[0].uid);
+  assert.ok(Array.isArray(c.profiles));
+});

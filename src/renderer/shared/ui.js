@@ -133,6 +133,9 @@ const P = {
   arrowRight: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   drag: '<circle cx="9" cy="6" r="1" fill="currentColor"/><circle cx="15" cy="6" r="1" fill="currentColor"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="9" cy="18" r="1" fill="currentColor"/><circle cx="15" cy="18" r="1" fill="currentColor"/>',
 };
+// labels of the widget sizes, used by the context menu and the Layout Editor
+export const SIZE_LABEL = { s: 'Small', m: 'Medium', l: 'Large' };
+
 export function icon(name, size = 18, extra = '') {
   return `<svg class="ic" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ${extra}>${P[name] || P.grid}</svg>`;
 }

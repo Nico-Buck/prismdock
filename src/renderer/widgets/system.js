@@ -72,7 +72,7 @@ export default [
       if (!cpu) return loading;
       return `<div class="pn"><div class="pn-head"><h3>${icon('cpu', 18)} Processor</h3><span class="sub num">${pct(cpu.pct)}</span></div>
         <div class="pn-sec chart">${lineChart(cpu.history, { h: 72, max: 100, color: pctColor(cpu.pct), dot: true, grid: [0, 0.5, 1], labels: true, fmt: (v) => v + '%', slots: HIST })}</div>
-        <div class="pn-grid c2"><div class="pn-stat"><b>${cpu.cores}</b><span>Logical cores</span></div><div class="pn-stat"><b>${pct(Math.max(...cpu.history))}</b><span>Peak (recent)</span></div></div>
+        <div class="pn-grid c2"><div class="pn-stat"><b>${cpu.cores}</b><span>Logical cores</span></div><div class="pn-stat"><b>${cpu.history?.length ? pct(Math.max(...cpu.history)) : '–'}</b><span>Peak (recent)</span></div></div>
         <div class="pn-muted">${esc(cpu.model || '')}</div>
         <div class="btns grid2"><button class="btn" data-a="taskmgr">${icon('external', 14)} Task Manager</button><button class="btn" data-a="about">${icon('gear', 14)} System info</button></div></div>`;
     },
@@ -152,14 +152,14 @@ export default [
     tile(ctx, { disks }) {
       const d = disks?.find((x) => x.name.toLowerCase() === (ctx.s.drive || 'C:\\').toLowerCase()) || disks?.[0];
       if (!d) return `<div class="tin"><span class="t-sub">…</span></div>`;
-      const used = ((d.total - d.free) / d.total) * 100;
+      const used = (d.total ? ((d.total - d.free) / d.total) * 100 : 0);
       if (ctx.size === 's') return `<div class="tin sq">${ring(used, { size: P(ctx, 46), stroke: Math.max(3, P(ctx, 4.5)), color: pctColor(used), label: d.name.slice(0, 2), sub: fmtBytes(d.free, 0) })}</div>`;
       return `<div class="tin wide"><span class="glyph-tile">${icon('disk')}</span><div class="col" style="width:calc(112px*var(--u));gap:calc(7px*var(--u))"><div class="row" style="justify-content:space-between"><span class="t-title">${d.name.slice(0, 2)}</span><span class="t-sub num">${fmtBytes(d.free, 0)} free</span></div>${bar(used, pctColor(used))}</div></div>`;
     },
     panel(ctx, { disks }) {
       if (!disks) return loading;
       return `<div class="pn"><div class="pn-head"><h3>${icon('disk', 18)} Drives</h3></div>${disks.map((d) => {
-        const used = ((d.total - d.free) / d.total) * 100;
+        const used = (d.total ? ((d.total - d.free) / d.total) * 100 : 0);
         return `<div class="pn-sec" data-a="open" data-v="${esc(d.name)}"><div class="pn-row"><b class="grow">${esc(d.label || 'Local disk')} (${d.name.slice(0, 2)})</b><span class="dim num">${fmtBytes(d.free)} free of ${fmtBytes(d.total, 0)}</span></div>${bar(used, pctColor(used))}</div>`;
       }).join('')}<div class="btns grid2"><button class="btn" data-a="cleanup">${icon('sparkles', 14)} Storage Sense</button><button class="btn" data-a="explorer">${icon('folder', 14)} This PC</button></div></div>`;
     },
