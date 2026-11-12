@@ -52,6 +52,9 @@ export const WEEKDAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thurs
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 export const fmtDate = (d, opts = { weekday: 'short', month: 'short', day: 'numeric' }) => d.toLocaleDateString('en-US', opts);
+// Open-Meteo gives sunrise/sunset as the city's wall-clock time ("2026-11-12T07:21"); as moments in time
+// they need the city's UTC offset, or the sun is placed wrong when the city is in another time zone
+export const sunMoments = (w) => [w.daily.sunrise[0], w.daily.sunset[0]].map((s) => (w.utcOffset == null ? new Date(s) : new Date(Date.parse(s + 'Z') - w.utcOffset * 1000)));
 export const fmtTimeShort = (d, h24 = true) => d.toLocaleTimeString(h24 ? 'en-GB' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: !h24 });
 
 // ---------------- icons (24x24, 1.8 stroke, rounded) ----------------

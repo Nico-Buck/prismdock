@@ -1,4 +1,4 @@
-import { icon, ring, bar, esc, fmtDur, fmtClock, fmtDate, fmtTimeShort, relTime, C, WEEKDAYS, WEEKDAYS_LONG, MONTHS, MONTHS_LONG } from '../shared/ui.js';
+import { icon, ring, bar, esc, fmtDur, fmtClock, fmtDate, fmtTimeShort, relTime, C, WEEKDAYS, WEEKDAYS_LONG, MONTHS, MONTHS_LONG, sunMoments } from '../shared/ui.js';
 import { barChart, sparkBars } from '../shared/graph.js';
 
 // Pomodoro lengths from the widget settings, never 0 or empty (that would end every round at once)
@@ -28,7 +28,7 @@ function allEvents(ctx, ics) {
   const remote = ics?.connected ? ics.events.map((e, i) => ({ ...e, color: EV_COLORS[i % EV_COLORS.length] })) : [];
   return [...local, ...remote].sort((a, b) => a.start - b.start);
 }
-function nextEvent(events) { const now = Date.now(); return events.find((e) => (e.end || e.start) > now && !e.allDay) || events.find((e) => e.start >= new Date().setHours(0, 0, 0, 0)); }
+function nextEvent(events) { const now = Date.now(); return events.find((e) => (e.end || e.start) > now && !e.allDay) || events.find((e) => e.start >= new Date().setHours(0, 0, 0, 0) && (e.allDay || (e.end || e.start) > now)); } // never one that already ended
 
 function monthGrid(date, events) {
   const y = date.getFullYear(), m = date.getMonth();
@@ -254,7 +254,7 @@ export default [
         ctx.rerender(true);
       },
       preset: (ctx, el) => { const d = Number(el.dataset.v) * 60; ctx.store.set('timer', { running: true, duration: d, remaining: d, endsAt: Date.now() + d * 1000 }); ctx.rerender(true); },
-      reset: (ctx) => { const st = ctx.store.get('timer', {}); const d = st.duration || ctx.s.minutes * 60; ctx.store.set('timer', { running: false, duration: d, remaining: d }); ctx.rerender(true); },
+      reset: (ctx) => { const d = Math.max(1, Number(ctx.s.minutes) || 10) * 60; /* back to the default length from the settings */ ctx.store.set('timer', { running: false, duration: d, remaining: d }); ctx.rerender(true); },
     },
   },
   {
@@ -288,7 +288,7 @@ export default [
       const now = new Date(); const pos = (now.getHours() * 60 + now.getMinutes()) / 1440;
       const hrs = d.screentime?.[dayKey()]?.hours || Array(24).fill(0);
       const w = d['integ:weather'];
-      const sun = w?.connected ? [new Date(w.daily.sunrise[0]), new Date(w.daily.sunset[0])] : null;
+      const sun = w?.connected ? sunMoments(w) : null; // on this PC's day, wherever the weather city is
       const sp = sun ? sun.map((x) => (x.getHours() * 60 + x.getMinutes()) / 1440) : null;
       const evs = allEvents(ctx, d['integ:calendar']).filter((e) => dayKey(new Date(e.start)) === dayKey() && !e.allDay);
       const W = P(ctx, 170), H = P(ctx, 34), mid = H / 2;

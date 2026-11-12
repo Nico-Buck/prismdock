@@ -30,10 +30,12 @@ async function setTaskbarHidden(hide) {
     // the recorded original goes along: a restarted helper (or the first start after a reboot) would
     // otherwise take our own auto-hide for the user's setting and restore that after a crash
     let orig = -1; try { orig = JSON.parse(fs.readFileSync(TB_FILE(), 'utf8')).state; } catch { /* none */ }
-    await native.call('taskbar', { show: false, monitors, restore: orig }).catch(() => null);
+    const ok = await native.call('taskbar', { show: false, monitors, restore: orig }).then(() => true, () => false);
     // a guardian outside our process job restores the taskbar if PrismDock is killed or crashes
     if (!guardStarted && fs.existsSync(TB_FILE())) { guardStarted = true; startGuard(); }
-    taskbarHidden = true;
+    // only a hide that happened counts: otherwise the original is recorded and the hide retried shortly
+    if (ok) taskbarHidden = true;
+    else setTimeout(() => { if (getConfig().behavior.hideTaskbar && !taskbarHidden) setTaskbarHidden(true).catch(() => {}); }, 3000);
   } else {
     await restoreTaskbar();
   }

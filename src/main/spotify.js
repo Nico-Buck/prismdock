@@ -22,9 +22,12 @@ async function form(url, body) {
 }
 
 // Opens the Spotify consent page and resolves once the browser comes back to the loopback address.
+// A new Connect replaces an abandoned one (its server would otherwise hold the port for 5 minutes).
+let pending = null; // { srv, timer, reject }
 function connect() {
   const id = clientId();
   if (!id) return Promise.reject(new Error('Enter your Spotify app’s Client ID first'));
+  if (pending) { clearTimeout(pending.timer); pending.srv.close(); pending.reject(new Error('Replaced by a new sign-in')); pending = null; }
   const verifier = b64url(crypto.randomBytes(48));
   const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
   const state = b64url(crypto.randomBytes(12));
@@ -33,8 +36,9 @@ function connect() {
     const srv = http.createServer(async (req, res) => {
       const u = new URL(req.url, REDIRECT);
       if (u.pathname !== '/callback') { res.statusCode = 404; res.end(); return; }
-      const done = (ok, msg, err) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(page(ok, msg)); srv.close(); clearTimeout(timer); err ? reject(err) : resolve(true); };
-      if (u.searchParams.get('state') !== state) return done(false, 'The sign-in response did not match. Please try again.', new Error('State mismatch'));
+      const done = (ok, msg, err) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(page(ok, msg)); srv.close(); clearTimeout(timer); pending = null; err ? reject(err) : resolve(true); };
+      // a request that is not the answer to this sign-in (an old tab, another page) is ignored, not fatal
+      if (u.searchParams.get('state') !== state) { res.statusCode = 400; res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(page(false, 'This link belongs to an older sign-in. Use the newest Spotify tab.')); return; }
       if (u.searchParams.get('error')) return done(false, 'Access was not granted.', new Error(u.searchParams.get('error')));
       try {
         const t = await form('https://accounts.spotify.com/api/token', { grant_type: 'authorization_code', code: u.searchParams.get('code'), redirect_uri: REDIRECT, client_id: id, code_verifier: verifier });
@@ -43,8 +47,9 @@ function connect() {
         done(true, 'You can close this tab and return to PrismDock.');
       } catch (e) { done(false, e.message, e); }
     });
-    const timer = setTimeout(() => { srv.close(); reject(new Error('Sign-in timed out')); }, 5 * 60 * 1000);
-    srv.on('error', (e) => { clearTimeout(timer); reject(new Error(`Port ${REDIRECT_PORT} is busy (${e.code})`)); });
+    const timer = setTimeout(() => { srv.close(); pending = null; reject(new Error('Sign-in timed out')); }, 5 * 60 * 1000);
+    pending = { srv, timer, reject };
+    srv.on('error', (e) => { clearTimeout(timer); pending = null; reject(new Error(`Port ${REDIRECT_PORT} is busy (${e.code})`)); });
     srv.listen(REDIRECT_PORT, '127.0.0.1', () => {
       const q = new URLSearchParams({ client_id: id, response_type: 'code', redirect_uri: REDIRECT, code_challenge_method: 'S256', code_challenge: challenge, scope: SCOPES, state });
       shell.openExternal(`https://accounts.spotify.com/authorize?${q}`);

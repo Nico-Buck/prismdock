@@ -150,7 +150,9 @@ export default [
     sizes: ['s', 'm'], size: 'm', topics: ['disks'],
     settings: [{ key: 'drive', label: 'Drive', type: 'text', default: 'C:\\' }],
     tile(ctx, { disks }) {
-      const d = disks?.find((x) => x.name.toLowerCase() === (ctx.s.drive || 'C:\\').toLowerCase()) || disks?.[0];
+      // "d", "D:" and "D:\" all mean drive D
+      const want = ((ctx.s.drive || 'C').trim()[0] || 'C').toUpperCase() + ':\\';
+      const d = disks?.find((x) => x.name.toUpperCase() === want) || disks?.[0];
       if (!d) return `<div class="tin"><span class="t-sub">…</span></div>`;
       const used = (d.total ? ((d.total - d.free) / d.total) * 100 : 0);
       if (ctx.size === 's') return `<div class="tin sq">${ring(used, { size: P(ctx, 46), stroke: Math.max(3, P(ctx, 4.5)), color: pctColor(used), label: d.name.slice(0, 2), sub: fmtBytes(d.free, 0) })}</div>`;
@@ -181,7 +183,7 @@ export default [
     panel(ctx, { battery: b }) {
       if (!b) return loading;
       if (!b.present) return `<div class="pn"><div class="pn-head"><h3>${icon('bolt', 18)} Power</h3></div>${na('No battery detected – this device runs on mains power.')}<div class="btns"><button class="btn" data-a="power">Power options</button></div></div>`;
-      return `<div class="pn"><div class="pn-head"><h3>${icon('battery', 18)} Battery</h3><span class="sub">${b.charging ? 'Charging' : 'On battery'}</span></div>
+      return `<div class="pn"><div class="pn-head"><h3>${icon('battery', 18)} Battery</h3><span class="sub">${b.charging ? 'Charging' : b.ac ? 'Plugged in' : 'On battery'}</span></div>
         <div class="pn-big">${b.percent}%</div>${bar(b.percent, b.percent <= 20 ? C.red : C.green)}
         <div class="pn-grid c2"><div class="pn-stat"><b>${b.secondsLeft > 0 ? fmtDur(b.secondsLeft, true) : '–'}</b><span>Time left</span></div><div class="pn-stat"><b>${b.saver ? 'On' : 'Off'}</b><span>Battery saver</span></div></div>
         <div class="btns"><button class="btn" data-a="power">Power options</button></div></div>`;

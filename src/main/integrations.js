@@ -16,14 +16,18 @@ async function http(url, opts = {}) {
     const text = await r.text();
     let body; try { body = JSON.parse(text); } catch { body = text; }
     if (!r.ok) {
-      const msg = (body && (body.message || body.error?.message || body.error_description || body.error)) || r.statusText;
+      // GraphQL APIs (Linear) answer 400 with { errors: [{ message }] }
+      const msg = (body && (body.message || body.errors?.[0]?.message || body.error?.message || body.error_description || body.error)) || r.statusText;
       throw new Error(`${r.status} ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
     }
+    if (opts.withLink) return { body, link: r.headers.get('link') || '' }; // paging (Shopify)
     return body;
   } finally { clearTimeout(t); }
 }
 const notConnected = (reason) => ({ connected: false, reason });
 // local calendar dates: toISOString() would give the UTC date, which drops today's sales east of UTC
+// Stripe amounts are in the smallest unit; these currencies have none below the main unit
+const ZERO_DECIMAL = new Set(['bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf', 'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf']);
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const days = (n) => { const out = []; const d = new Date(); d.setHours(12, 0, 0, 0); for (let i = n - 1; i >= 0; i--) { const x = new Date(d); x.setDate(d.getDate() - i); out.push(ymd(x)); } return out; };
 const series = (n, rows) => { const map = Object.fromEntries(days(n).map((k) => [k, 0])); for (const [date, v] of rows) if (date in map) map[date] += v; return Object.entries(map).map(([date, value]) => ({ date, value })); };
@@ -133,7 +137,8 @@ async function youtube() {
     const r = await http(`https://www.googleapis.com/youtube/v3/channels?part=statistics,snippet&id=${encodeURIComponent(id)}&key=${encodeURIComponent(key)}`);
     const c = r.items?.[0];
     if (!c) throw new Error('Channel not found');
-    return { connected: true, name: c.snippet.title, followers: Number(c.statistics.subscriberCount), views: Number(c.statistics.viewCount), videos: Number(c.statistics.videoCount) };
+    // channels can hide their subscriber count: then there is none (not NaN)
+    return { connected: true, name: c.snippet.title, followers: c.statistics.hiddenSubscriberCount ? null : Number(c.statistics.subscriberCount), views: Number(c.statistics.viewCount), videos: Number(c.statistics.videoCount) };
   });
 }
 async function instagram() {
@@ -176,7 +181,7 @@ async function stripe() {
       const r = await http(`https://api.stripe.com/v1/balance_transactions?${q}`, { headers: { Authorization: `Bearer ${key}` } });
       for (const t of r.data) {
         if (t.type === 'charge' || t.type === 'payment' || t.type === 'refund' || t.type === 'payment_refund') {
-          rows.push([ymd(new Date(t.created * 1000)), t.net / 100]); currency = t.currency;
+          rows.push([ymd(new Date(t.created * 1000)), t.net / (ZERO_DECIMAL.has(t.currency) ? 1 : 100)]); currency = t.currency;
         }
       }
       if (!r.has_more) break;
@@ -194,9 +199,15 @@ async function paypal() {
     const tok = await http(`${base}/v1/oauth2/token`, { method: 'POST', headers: { Authorization: 'Basic ' + Buffer.from(`${id}:${secret}`).toString('base64'), 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=client_credentials' });
     const end = new Date(); const start = new Date(Date.now() - 30 * 864e5);
     const q = new URLSearchParams({ start_date: start.toISOString().slice(0, 19) + 'Z', end_date: end.toISOString().slice(0, 19) + 'Z', fields: 'transaction_info', page_size: '500', transaction_status: 'S' });
-    const r = await http(`${base}/v1/reporting/transactions?${q}`, { headers: { Authorization: `Bearer ${tok.access_token}` } });
+    // all pages (500 transactions each, at most 20 pages), not just the first
+    const details = [];
+    for (let page = 1, pages = 1; page <= pages && page <= 20; page++) {
+      q.set('page', String(page));
+      const r = await http(`${base}/v1/reporting/transactions?${q}`, { headers: { Authorization: `Bearer ${tok.access_token}` } });
+      details.push(...(r.transaction_details || [])); pages = Number(r.total_pages) || 1;
+    }
     let currency = 'EUR';
-    const rows = (r.transaction_details || []).map((t) => {
+    const rows = details.map((t) => {
       const i = t.transaction_info; currency = i.transaction_amount.currency_code;
       const fee = Number(i.fee_amount?.value || 0);
       return [ymd(new Date(i.transaction_initiation_date)), Number(i.transaction_amount.value) + fee];
@@ -211,72 +222,127 @@ async function shopify() {
   return cached(`shopify:${domain}`, ttl(), async () => {
     const since = new Date(Date.now() - 30 * 864e5).toISOString();
     const host = domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-    const r = await http(`https://${host}/admin/api/2024-10/orders.json?status=any&limit=250&created_at_min=${encodeURIComponent(since)}&fields=created_at,total_price,currency,financial_status`, { headers: { 'X-Shopify-Access-Token': token } });
+    // all pages (250 orders each, at most 20) via the Link header's rel="next"
+    const orders = [];
+    let next = `https://${host}/admin/api/2024-10/orders.json?status=any&limit=250&created_at_min=${encodeURIComponent(since)}&fields=created_at,total_price,currency,financial_status`;
+    for (let i = 0; next && i < 20; i++) {
+      const { body, link } = await http(next, { headers: { 'X-Shopify-Access-Token': token }, withLink: true });
+      orders.push(...(body.orders || []));
+      next = /<([^>]+)>;\s*rel="next"/.exec(link)?.[1] || null;
+    }
     let currency = 'EUR';
-    const rows = (r.orders || []).filter((o) => o.financial_status !== 'refunded' && o.financial_status !== 'voided').map((o) => { currency = o.currency; return [ymd(new Date(o.created_at)), Number(o.total_price)]; });
+    const rows = orders.filter((o) => o.financial_status !== 'refunded' && o.financial_status !== 'voided').map((o) => { currency = o.currency; return [ymd(new Date(o.created_at)), Number(o.total_price)]; });
     const s = series(30, rows);
     return { connected: true, currency, total: s.reduce((a, d) => a + d.value, 0), orders: rows.length, series: s };
   });
 }
 
 // ---------- calendar (iCal subscription URL, e.g. Google Calendar "secret address") ----------
-function parseIcsDate(v) {
+// A DATE or DATE-TIME value: UTC with Z, the wall-clock time of TZID when given (Google and Outlook use it for
+// recurring events), otherwise this PC's local time. Windows zone names Intl does not know fall back to local.
+function zoneOffset(tz, at) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(at).map((x) => [x.type, x.value]));
+  return Date.UTC(+p.year, p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - at;
+}
+function parseIcsDate(v, tzid) {
   const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?/.exec(v);
   if (!m) return null;
   const [, y, mo, d, h = '0', mi = '0', s = '0', z] = m;
-  return z ? Date.UTC(+y, mo - 1, +d, +h, +mi, +s) : new Date(+y, mo - 1, +d, +h, +mi, +s).getTime();
+  if (z) return Date.UTC(+y, mo - 1, +d, +h, +mi, +s);
+  if (tzid && m[4] !== undefined) {
+    try {
+      const wall = Date.UTC(+y, mo - 1, +d, +h, +mi, +s);
+      const t = wall - zoneOffset(tzid, wall);
+      return wall - zoneOffset(tzid, t); // second pass lands on the right side of a DST change
+    } catch { /* unknown zone name */ }
+  }
+  return new Date(+y, mo - 1, +d, +h, +mi, +s).getTime();
+}
+const WD = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+// the n-th weekday of a month (n = -1: the last), as in BYDAY=2TU or BYDAY=-1FR
+function nthWeekday(year, month, wd, n, h, mi, s) {
+  let d;
+  if (n > 0) { const first = new Date(year, month, 1).getDay(); d = 1 + ((wd - first + 7) % 7) + (n - 1) * 7; }
+  else { const last = new Date(year, month + 1, 0); d = last.getDate() - ((last.getDay() - wd + 7) % 7) + (n + 1) * 7; }
+  const r = new Date(year, month, d, h, mi, s);
+  return r.getMonth() === month && d > 0 ? r : null;
 }
 function parseIcs(text, from, to) {
   const lines = text.replace(/\r\n[ \t]/g, '').split(/\r?\n/);
   const events = []; let ev = null;
   for (const l of lines) {
-    if (l === 'BEGIN:VEVENT') ev = {};
+    if (l === 'BEGIN:VEVENT') ev = { exdates: [] };
     else if (l === 'END:VEVENT') { if (ev && ev.start) events.push(ev); ev = null; }
     else if (ev) {
       const i = l.indexOf(':'); if (i < 0) continue;
       const key = l.slice(0, i); const val = l.slice(i + 1);
       const name = key.split(';')[0];
-      if (name === 'DTSTART') { ev.start = parseIcsDate(val); ev.allDay = /VALUE=DATE/.test(key) || val.length === 8; }
-      else if (name === 'DTEND') ev.end = parseIcsDate(val);
+      const tzid = /;TZID=("?)([^;:"]+)\1/.exec(key)?.[2];
+      if (name === 'DTSTART') { ev.start = parseIcsDate(val, tzid); ev.allDay = /VALUE=DATE(?!-)/.test(key) || val.length === 8; }
+      else if (name === 'DTEND') ev.end = parseIcsDate(val, tzid);
       else if (name === 'SUMMARY') ev.title = val.replace(/\\,/g, ',').replace(/\\n/g, ' ');
       else if (name === 'LOCATION') ev.location = val.replace(/\\,/g, ',');
       else if (name === 'RRULE') ev.rrule = Object.fromEntries(val.split(';').map((p) => p.split('=')));
+      else if (name === 'EXDATE') for (const x of val.split(',')) ev.exdates.push(parseIcsDate(x, tzid));
+      else if (name === 'RECURRENCE-ID') ev.recurrenceId = parseIcsDate(val, tzid);
+      else if (name === 'UID') ev.uid = val;
+      else if (name === 'STATUS') ev.cancelled = val.trim().toUpperCase() === 'CANCELLED';
     }
   }
+  // moved or cancelled single occurrences of a series replace the generated ones (uid + original start)
+  const replaced = events.filter((e) => e.uid && e.recurrenceId != null).map((e) => [e.uid, e.recurrenceId]);
+  const near = (list, t) => list.some((x) => x != null && Math.abs(x - t) < 60e3);
+  const isReplaced = (uid, t) => replaced.some(([u, r]) => u === uid && Math.abs(r - t) < 60e3);
   const out = [];
   for (const e of events) {
+    if (e.cancelled) continue;
     const dur = (e.end || e.start + 3600e3) - e.start;
     if (!e.rrule) { if (e.start + dur >= from && e.start <= to) out.push({ ...e, end: e.start + dur }); continue; }
     const freq = e.rrule.FREQ; const interval = Number(e.rrule.INTERVAL || 1);
     const until = e.rrule.UNTIL ? parseIcsDate(e.rrule.UNTIL) : Infinity; let count = e.rrule.COUNT ? Number(e.rrule.COUNT) : Infinity;
-    const byday = e.rrule.BYDAY ? e.rrule.BYDAY.split(',').map((d) => ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'].indexOf(d.slice(-2))) : null;
+    const bydayRaw = e.rrule.BYDAY ? e.rrule.BYDAY.split(',') : null;
+    const byday = bydayRaw ? bydayRaw.map((d) => WD.indexOf(d.slice(-2))) : null;
+    const s0 = new Date(e.start);
     let t = new Date(e.start);
-    // an endless daily/weekly series from years ago would use up the iteration guard before reaching the
-    // shown range: without COUNT, jump close to the range first (whole intervals, so the phase is kept)
+    // an endless series from years ago would use up the iteration guard before reaching the shown range:
+    // without COUNT, jump close to the range first (whole intervals, so the phase is kept)
     if (count === Infinity && (freq === 'DAILY' || freq === 'WEEKLY')) {
       const step = (freq === 'DAILY' ? 1 : 7) * interval;
       const skip = Math.floor((from - dur - t.getTime()) / (step * 864e5)) - 1;
       if (skip > 0) t.setDate(t.getDate() + skip * step);
+    }
+    if (count === Infinity && freq === 'MONTHLY') {
+      const f = new Date(from); const months = (f.getFullYear() - t.getFullYear()) * 12 + f.getMonth() - t.getMonth();
+      const skip = Math.floor(months / interval) - 1;
+      if (skip > 0) t = new Date(t.getFullYear(), t.getMonth() + skip * interval, 1, s0.getHours(), s0.getMinutes(), s0.getSeconds());
     }
     for (let guard = 0; guard < 2000 && t.getTime() <= Math.min(to, until) && count > 0; guard++) {
       const candidates = [];
       if (freq === 'WEEKLY' && byday) {
         const weekStart = new Date(t); weekStart.setDate(t.getDate() - t.getDay());
         for (const wd of byday) { const c = new Date(weekStart); c.setDate(weekStart.getDate() + wd); if (c.getTime() >= e.start) candidates.push(c); }
+      } else if (freq === 'MONTHLY' && bydayRaw && /^[+-]?\d/.test(bydayRaw[0])) {
+        for (const d of bydayRaw) { const c = nthWeekday(t.getFullYear(), t.getMonth(), WD.indexOf(d.slice(-2)), parseInt(d, 10), s0.getHours(), s0.getMinutes(), s0.getSeconds()); if (c && c.getTime() >= e.start) candidates.push(c); }
+        candidates.sort((x, y) => x - y);
+      } else if (freq === 'MONTHLY') {
+        // the same day of every month; months without that day (the 31st) are skipped, not moved
+        const c = new Date(t.getFullYear(), t.getMonth(), s0.getDate(), s0.getHours(), s0.getMinutes(), s0.getSeconds());
+        if (c.getMonth() === t.getMonth() && c.getTime() >= e.start) candidates.push(c);
       } else candidates.push(new Date(t));
       for (const c of candidates) {
         if (count <= 0 || c.getTime() > until) break;
         count--;
+        if (near(e.exdates, c.getTime()) || (e.uid && isReplaced(e.uid, c.getTime()))) continue; // deleted or moved
         if (c.getTime() + dur >= from && c.getTime() <= to) out.push({ ...e, start: c.getTime(), end: c.getTime() + dur });
       }
       if (freq === 'DAILY') t.setDate(t.getDate() + interval);
       else if (freq === 'WEEKLY') t.setDate(t.getDate() + 7 * interval);
-      else if (freq === 'MONTHLY') t.setMonth(t.getMonth() + interval);
+      else if (freq === 'MONTHLY') t = new Date(t.getFullYear(), t.getMonth() + interval, 1, s0.getHours(), s0.getMinutes(), s0.getSeconds());
       else if (freq === 'YEARLY') t.setFullYear(t.getFullYear() + interval);
       else break;
     }
   }
-  return out.sort((a, b) => a.start - b.start);
+  return out.map(({ exdates, rrule, uid, recurrenceId, cancelled, ...e }) => e).sort((a, b) => a.start - b.start);
 }
 async function calendar() {
   const url = cfg().calendarIcs.url;
@@ -313,4 +379,4 @@ async function get(name, opts = {}) {
   try { return await fn(); } catch (e) { return { connected: false, error: e.message }; }
 }
 
-module.exports = { init, get, geocode, customJson, invalidate };
+module.exports = { init, get, geocode, customJson, invalidate, parseIcs };

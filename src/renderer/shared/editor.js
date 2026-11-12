@@ -19,6 +19,7 @@ export class EditorMixin {
     if (!this.preview) this.api.dock.focus();
   }
   closeEditor() {
+    this._confirmReset = false; this._confirmDelLayout = false;
     if (this.panel?.kind === 'editor') { this._unsubPanel(); this.panel = null; this._fade(this.panelEl, false); }
     this.editing = false; this.selected = null;
     this.root.classList.remove('editing');
@@ -33,10 +34,11 @@ export class EditorMixin {
     this._renderEditor();
   }
 
-  _renderEditor() {
+  // force: render although a text field has focus (the caller restores focus, or the field goes away)
+  _renderEditor(force = false) {
     const p = this.panel; if (p?.kind !== 'editor') return;
     const a = document.activeElement;
-    if (this.panelBody.contains(a) && a.matches('input[type=text],input[type=search],input:not([type])')) { this._editorStale = true; return; }
+    if (!force && this.panelBody.contains(a) && a.matches('input[type=text],input[type=search],input:not([type])')) { this._editorStale = true; return; }
     if (this._pressedIn === this.panelEl) { this._editorStale = true; return; }
     const c = this.cfg;
     const profiles = c.profiles || [];
@@ -68,7 +70,7 @@ export class EditorMixin {
     const w = list.find((x) => x.uid === this.selected && this.reg.get(x.type));
     const hint = `<div class="ed-hint">${icon('drag', 14)}<span><b>Drag</b> widgets on the bar to reorder them, or drag an empty spot to move the whole bar (release in the top half to dock it at the top). <b>Click</b> a widget to select it. The <b>size badge</b> cycles Small / Medium / Large, <b>×</b> removes it.</span></div>`;
     if (!w) {
-      return `${hint}<div class="ed-list">${list.map((x, i) => { const d = this.reg.get(x.type); return `<button class="ed-item ${x.enabled ? '' : 'off'}" data-ed="select" data-v="${x.uid}"><span class="ed-pos">${i + 1}</span>${d?.brand ? '' : `<span class="dim" style="display:flex">${icon(d?.icon || 'grid', 14)}</span>`}<span class="grow">${esc(d?.name || x.type)}</span>${x.enabled ? '' : '<span class="kbd">hidden</span>'}</button>`; }).join('')}</div>`;
+      return `${hint}<div class="ed-list">${list.map((x, i) => { const d = this.reg.get(x.type); return `<button class="ed-item ${x.enabled ? '' : 'off'}" data-ed="select" data-v="${esc(x.uid)}"><span class="ed-pos">${i + 1}</span>${d?.brand ? '' : `<span class="dim" style="display:flex">${icon(d?.icon || 'grid', 14)}</span>`}<span class="grow">${esc(d?.name || x.type)}</span>${x.enabled ? '' : '<span class="kbd">hidden</span>'}</button>`; }).join('')}</div>`;
     }
     const d = this.reg.get(w.type); const idx = list.indexOf(w);
     const size = w.size && w.size !== 'auto' && d.sizes.includes(w.size) ? w.size : d.size;
@@ -91,7 +93,7 @@ export class EditorMixin {
     const used = (type) => this.cfg.widgets.filter((w) => w.type === type).length;
     // the previews show real values: subscribe to what the visible cards need while the tab is open
     for (const d of defs) for (const tp of d.topics || []) {
-      if (p.subs.has(tp) || tp === 'startApps') continue;
+      if (p.subs.has(tp) || tp === 'startApps' || tp === 'clock') continue;
       p.subs.add(tp);
       p.unsubs.push(this.hub.subscribe(tp, () => { clearTimeout(p.rt); p.rt = setTimeout(() => { if (this.panel === p && p.tab === 'add') this._renderEditor(); }, 500); }));
     }
@@ -130,13 +132,13 @@ export class EditorMixin {
     if (act !== 'deleteLayout') this._confirmDelLayout = false;
     switch (act) {
       case 'done': return this.closeEditor();
-      case 'tab': this.panel.tab = d.v; return this._renderEditor();
-      case 'cat': this.panel.cat = d.v; this.panel.q = ''; return this._renderEditor();
+      case 'tab': this.panel.tab = d.v; this._dropPreviewSubs(); return this._renderEditor();
+      case 'cat': this.panel.cat = d.v; this.panel.q = ''; this._dropPreviewSubs(); return this._renderEditor();
       case 'switch': this.selected = null; return api.config.layout('switch', { id: d.v });
       case 'newLayout': return api.config.layout('create', { name: `Layout ${(this.cfg.profiles || []).length + 1}` }).then(() => { this.panel.renaming = true; this._renderEditor(); });
       case 'duplicate': return api.config.layout('create', { name: `${(this.cfg.profiles || []).find((x) => x.id === this.cfg.activeProfile)?.name || 'Layout'} copy` });
       case 'rename': this.panel.renaming = true; return this._renderEditor();
-      case 'renameOk': { const v = this.panelBody.querySelector('[data-ed-name]')?.value.trim(); this.panel.renaming = false; if (v) await api.config.layout('rename', { id: this.cfg.activeProfile, name: v }); return this._renderEditor(); }
+      case 'renameOk': { const v = this.panelBody.querySelector('[data-ed-name]')?.value.trim(); this.panel.renaming = false; if (v) await api.config.layout('rename', { id: this.cfg.activeProfile, name: v }); return this._renderEditor(true); }
       case 'deleteLayout':
         if (!this._confirmDelLayout) { this._confirmDelLayout = true; return this._renderEditor(); }
         this._confirmDelLayout = false;
@@ -173,8 +175,11 @@ export class EditorMixin {
   }
 
 
+  // the Add tab's preview subscriptions belong to the cards shown now
+  _dropPreviewSubs() { const p = this.panel; if (p?.kind !== 'editor') return; p.unsubs.forEach((u) => u()); p.unsubs = []; p.subs.clear(); }
   _editorQuery(pos, keep) {
-    this._renderEditor();
+    this._dropPreviewSubs();
+    this._renderEditor(true);
     if (keep) { const i = this.panelBody.querySelector('[data-ed-q]'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }
   }
 }

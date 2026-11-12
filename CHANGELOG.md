@@ -51,6 +51,21 @@ versions follow [Semantic Versioning](https://semver.org).
 - Several font sizes in menus and buttons were ignored (invalid CSS shorthand).
 - Notifications of the installed build use the installer's app ID, so Windows shows them.
 - Start with Windows keeps a choice made in Task Manager; failed app icons are retried later.
+- Third review: the Recycle Bin always showed empty on 64-bit Windows; Store apps (Calculator, Settings,
+  Photos ...) were missing from the bar and the launcher; the native helper did not start under a Group
+  Policy execution policy or with a non-Latin user name, and a blocked helper was respawned every 2 s.
+- Layout Editor search filters while typing; Esc, arrow keys and Delete work; open panels are no longer
+  rebuilt on every settings change; menus and panels stay on screen on small displays.
+- Claude Code tokens were counted 2-3 times; Codex limits disappeared after a minute; revenue no longer
+  adds up different currencies or misreads JPY; PayPal and Shopify read all pages.
+- iCal: time zones (TZID), deleted, moved and cancelled occurrences, and monthly rules like the second
+  Tuesday.
+- Wi-Fi works in every Windows language; a solid colour desktop no longer shows the old wallpaper;
+  clicking the active app minimizes it; offline network folders no longer freeze the dock.
+- Many smaller fixes: ended events shown as now, Timer default length, World Clock offsets like +5:45,
+  sun position for a weather city in another time zone, 24-hour format, drive letters, Charging vs
+  Plugged in, YouTube hidden subscriber counts, Linear error messages, network spikes after VPN connects,
+  local screenshot names, and the debug harness and open command are locked down.
 
 ### Performance
 - Idle CPU −71 %, mouse-move CPU −49 %, idle memory −18 % compared with 1.2.0 (see README).

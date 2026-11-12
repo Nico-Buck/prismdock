@@ -9,19 +9,23 @@ const native = require('./native/bridge');
 
 const cache = new Map(); // key -> { at, value, promise }
 const mediaDir = () => { const d = path.join(app.getPath('userData'), 'media'); fs.mkdirSync(d, { recursive: true }); return d; };
+const gens = new Map(); // key -> generation, bumped by invalidate()
 async function cached(key, ttl, fn) {
   const c = cache.get(key);
   const now = Date.now();
   if (c && c.value !== undefined && now - c.at < ttl) return c.value;
   if (c && c.promise) return c.promise;
-  const promise = fn().then((value) => { cache.set(key, { at: Date.now(), value }); return value; })
+  const gen = gens.get(key) || 0;
+  const promise = fn().then((value) => { if ((gens.get(key) || 0) === gen) cache.set(key, { at: Date.now(), value }); else cache.delete(key); return value; })
     .catch((e) => { cache.delete(key); throw e; });
   cache.set(key, { ...(c || {}), promise });
   return promise;
 }
 // merges pushed fields into a cached value (e.g. live volume) and returns it, or null if nothing is cached yet
 const patchCached = (key, fields) => { const c = cache.get(key); if (!c || c.value === undefined) return null; c.value = { ...c.value, ...fields }; c.at = Date.now(); return c.value; };
-const invalidate = (prefix) => { for (const k of [...cache.keys()]) if (k === prefix || k.startsWith(prefix + ':')) cache.delete(k); };
+const invalidate = (prefix) => {
+  for (const k of [...cache.keys()]) if (k === prefix || k.startsWith(prefix + ':')) { cache.delete(k); gens.set(k, (gens.get(k) || 0) + 1); }
+};
 
 const history = { cpu: [], gpu: [], rx: [], tx: [], mem: [] };
 const pushHist = (k, v, n = 48) => { history[k].push(v); if (history[k].length > n) history[k].shift(); };
@@ -57,7 +61,7 @@ const sys = {
     const n = await native.call('net');
     const now = Date.now();
     let down = 0, up = 0;
-    if (lastNet) {
+    if (lastNet && lastNet.ifs === n.ifs) {
       const dt = (now - lastNet.at) / 1000;
       down = Math.max(0, (n.rx - lastNet.rx) / dt);
       up = Math.max(0, (n.tx - lastNet.tx) / dt);
@@ -70,7 +74,7 @@ const sys = {
   battery: () => cached('battery', 5000, async () => {
     const b = await native.call('battery');
     const present = b.percent !== 255 && !(b.flag & 128);
-    return { present, percent: present ? b.percent : null, charging: !!(b.flag & 8) || (present && b.ac === 1), ac: b.ac === 1, saver: !!b.saver, secondsLeft: b.secondsLeft };
+    return { present, percent: present ? b.percent : null, charging: !!(b.flag & 8) /* plugged in at 100 % is not charging */, ac: b.ac === 1, saver: !!b.saver, secondsLeft: b.secondsLeft };
   }),
   wifi: () => cached('wifi', 5000, () => native.call('wifi')),
   radios: () => cached('radios', 4000, () => native.call('radios').catch(() => [])),
@@ -87,21 +91,26 @@ const sys = {
   }),
 };
 
-// nvidia-smi gives real GPU temperature on NVIDIA systems; checked once.
-let nvPath; let nvCache = { at: 0, v: null };
+// nvidia-smi gives real GPU temperature on NVIDIA systems. A failure (no NVIDIA GPU, or a sleeping laptop GPU
+// that answers too slowly) pauses the next attempt for a minute, later ten, instead of giving up for good.
+let nvPath = null; let nvCache = { at: 0, v: null }; let nvFails = 0; let nvNext = 0;
 function nvidia() {
-  if (nvPath === null) return Promise.resolve(null);
+  if (Date.now() < nvNext) return Promise.resolve(null);
   if (Date.now() - nvCache.at < 2500) return Promise.resolve(nvCache.v);
-  const candidates = ['nvidia-smi', 'C:\\Windows\\System32\\nvidia-smi.exe'];
-  return new Promise((resolve) => {
-    execFile(nvPath || candidates[0], ['--query-gpu=name,temperature.gpu,utilization.gpu', '--format=csv,noheader,nounits'], { windowsHide: true, timeout: 3000 }, (err, out) => {
-      if (err) { nvPath = null; return resolve(null); }
-      nvPath = nvPath || candidates[0];
+  const candidates = nvPath ? [nvPath] : ['nvidia-smi', 'C:\\Windows\\System32\\nvidia-smi.exe'];
+  const tryAt = (i) => new Promise((resolve) => {
+    execFile(candidates[i], ['--query-gpu=name,temperature.gpu,utilization.gpu', '--format=csv,noheader,nounits'], { windowsHide: true, timeout: 5000 }, (err, out) => {
+      if (err) {
+        if (i + 1 < candidates.length) return resolve(tryAt(i + 1));
+        nvFails++; nvNext = Date.now() + (nvFails > 2 ? 600e3 : 60e3); return resolve(null);
+      }
+      nvPath = candidates[i]; nvFails = 0;
       const [name, temp, util] = String(out).split('\n')[0].split(',').map((s) => s.trim());
       nvCache = { at: Date.now(), v: { name, temp: Number(temp), util: Number(util) } };
       resolve(nvCache.v);
     });
   });
+  return tryAt(0);
 }
 
 // ---------- icons ----------
@@ -128,8 +137,9 @@ async function icon(p, size = 96) {
 async function windows() {
   return cached('windows', 1200, async () => {
     const list = await native.call('windows', { selfPid: process.pid });
-    // shell processes that own visible windows but are not apps (Windows 11 and Windows 10 names)
-    return list.filter((w) => w.exe && !/\\(ApplicationFrameHost|ShellExperienceHost|SearchHost|SearchUI|SearchApp|StartMenuExperienceHost|TextInputHost|LockApp|WindowsInternal\.ComposableShell\.Experiences\.TextInput\.InputApp)\.exe$/i.test(w.exe));
+    // shell processes that own visible windows but are not apps (Windows 11 and Windows 10 names). Store apps
+    // are kept: the helper reports their own process (a suspended one still shows as ApplicationFrameHost)
+    return list.filter((w) => w.exe && !/\\(ShellExperienceHost|SearchHost|SearchUI|SearchApp|StartMenuExperienceHost|TextInputHost|LockApp|WindowsInternal\.ComposableShell\.Experiences\.TextInput\.InputApp)\.exe$/i.test(w.exe));
   });
 }
 
@@ -147,20 +157,25 @@ function startApps() {
     const out = [];
     walk(path.join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft\\Windows\\Start Menu\\Programs'), out);
     walk(path.join(process.env.APPDATA, 'Microsoft\\Windows\\Start Menu\\Programs'), out);
+    // Store apps (Calculator, Notepad, Terminal, WhatsApp ...) have no shortcut file: they come from the AppsFolder
+    const appx = await native.call('appsFolder', {}, 15000).catch(() => []);
+    for (const a of appx || []) if (a.name && a.id) out.push({ name: a.name, path: 'shell:AppsFolder\\' + a.id });
     const seen = new Set();
     return out.filter((a) => { const k = a.name.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
       .sort((a, b) => a.name.localeCompare(b.name));
   });
 }
 
+// Windows never prunes Recent: read it without blocking the main process, and a file that vanished in
+// between must not empty the whole list
 function recent() {
   return cached('recent', 15000, async () => {
     const dir = path.join(process.env.APPDATA, 'Microsoft\\Windows\\Recent');
-    let files = [];
-    try {
-      files = fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.lnk'))
-        .map((f) => { const p = path.join(dir, f); return { name: f.slice(0, -4), path: p, mtime: fs.statSync(p).mtimeMs }; });
-    } catch { /* none */ }
+    const names = await fs.promises.readdir(dir).catch(() => []);
+    const files = (await Promise.all(names.filter((f) => f.toLowerCase().endsWith('.lnk')).map(async (f) => {
+      const p = path.join(dir, f);
+      try { return { name: f.slice(0, -4), path: p, mtime: (await fs.promises.stat(p)).mtimeMs }; } catch { return null; }
+    }))).filter(Boolean);
     return files.sort((a, b) => b.mtime - a.mtime).slice(0, 20);
   });
 }
@@ -239,7 +254,7 @@ function readLines(p, agg, size, parseLine) {
       agg.offset += n;
       const lines = (agg.rest + buf.toString('utf8', 0, n)).split('\n');
       agg.rest = lines.pop();
-      for (const line of lines) { if (!line) continue; const r = parseLine(line); if (r && r.ts) agg.entries.push(r); }
+      for (const line of lines) { if (!line) continue; const r = parseLine(line, agg); if (r && r.ts) agg.entries.push(r); }
     }
   } catch { /* unreadable or locked */ } finally { if (fd !== undefined) fs.closeSync(fd); }
   // keep only what the summaries need (last 8 days)
@@ -281,25 +296,31 @@ function aiLocal() {
           const j = JSON.parse(line);
           const u = j.message && j.message.usage;
           if (!u) return null;
-          return { ts: Date.parse(j.timestamp), model: j.message.model, tokens: (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_creation_input_tokens || 0) };
+          // Claude Code writes one line per content block, each repeating the message's usage: count it once
+          return { ts: Date.parse(j.timestamp), id: (j.message.id || '') + '|' + (j.requestId || ''), model: j.message.model, tokens: (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_creation_input_tokens || 0) };
         } catch { return null; }
       });
-      out.claude = { source: 'Claude Code (~/.claude)', ...summarize(entries) };
+      const seen = new Set();
+      const unique = entries.filter((e) => !e.id || e.id === '|' || (seen.has(e.id) ? false : seen.add(e.id)));
+      out.claude = { source: 'Claude Code (~/.claude)', ...summarize(unique) };
     }
     const codexDir = path.join(home, '.codex', 'sessions');
     if (fs.existsSync(codexDir)) {
-      let rate = null; let rateTs = 0;
-      const entries = scanJsonl(codexDir, (line) => {
+      // the newest rate-limit line of each log is kept with that log's cache entry: later scans only read
+      // new bytes and would otherwise lose it
+      const entries = scanJsonl(codexDir, (line, agg) => {
         if (!line.includes('token_count')) return null;
         try {
           const j = JSON.parse(line);
           const p = j.payload || j;
           const ts = Date.parse(j.timestamp);
-          if (p.rate_limits && ts > rateTs) { rate = p.rate_limits; rateTs = ts; }
+          if (p.rate_limits && ts > (agg.rateTs || 0)) { agg.rate = p.rate_limits; agg.rateTs = ts; }
           const last = p.info && p.info.last_token_usage;
           return { ts, tokens: last ? (last.input_tokens || 0) + (last.output_tokens || 0) : 0 };
         } catch { return null; }
       });
+      let rate = null; let rateTs = 0;
+      for (const [k, a] of fileAgg) if (k.startsWith(codexDir) && a.rateTs > rateTs) { rate = a.rate; rateTs = a.rateTs; }
       out.codex = { source: 'Codex CLI (~/.codex)', ...summarize(entries), rate, rateAt: rateTs || null };
     }
     return out;

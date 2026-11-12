@@ -207,7 +207,9 @@ class Store {
     else {
       // the saved layouts stay; the defaults go into the active one, not into "Default"
       const keepProfiles = this.config.profiles; const keepActive = this.config.activeProfile;
-      this.config = d; this.config.profiles = keepProfiles; this.config.activeProfile = keepActive;
+      this.config = d; this.config.activeProfile = keepActive;
+      // custom widgets are reset too: drop them from the kept layouts
+      this.config.profiles = keepProfiles.map((p) => ({ ...p, widgets: (p.widgets || []).filter((w) => !String(w.type).startsWith('custom:')) }));
       this._ensureProfiles(); this._syncProfile();
     }
     this.saveConfig();

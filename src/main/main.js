@@ -78,7 +78,7 @@ function createDock(display) {
   // Windows is logging off or shutting down: give the taskbar back while we still can
   win.on('session-end', () => { quitting = true; restoreTaskbar().catch(() => {}); });
   if (process.env.PRISM_DEBUG) win.webContents.on('console-message', (_e, level, msg, line, src) => console.log(`[dock ${level}] ${msg} (${src}:${line})`));
-  win.on('closed', () => docks.delete(display.id));
+  win.on('closed', () => { if (docks.get(display.id) === win) docks.delete(display.id); }); // not a newer dock for the same display
   // a crashed or killed renderer (GPU reset, out of memory) would leave the display without a bar: rebuild it
   win.webContents.on('render-process-gone', (_e, d) => {
     if (quitting || d.reason === 'clean-exit') return;
@@ -101,6 +101,7 @@ function timerOwner(d) {
 const dockInfo = (d) => ({ ...displayInfo(d), timerOwner: timerOwner(d) });
 
 function layoutDocks() {
+  if (quitting) return; // quit's own cleanup changes the work area: no new strips, docks or hidden taskbar now
   const cfg = store.config;
   const wanted = targetDisplays(cfg);
   const ids = new Set(wanted.map((d) => d.id));
@@ -239,7 +240,8 @@ function integrationsChanged(names) {
 // The portable build runs from a folder in %TEMP% that is deleted when it exits; the login item must point
 // to the portable .exe itself (electron-builder passes its path), otherwise Windows starts nothing at login.
 function launcherPath() { return process.env.PORTABLE_EXECUTABLE_FILE || process.execPath; }
-function setStartWithWindows(on) {
+// fromUser: switched in PrismDock - that also overrides an old "disabled" from Task Manager
+function setStartWithWindows(on, fromUser = false) {
   if (!app.isPackaged) return; // `npm start` would register electron.exe
   try {
     // The Run value keeps its name 'PrismDock' (Electron would name it after the AppUserModelId), so the
@@ -247,14 +249,14 @@ function setStartWithWindows(on) {
     // Task Manager keeps it disabled: Electron would re-enable it on every write.
     const opts = { path: launcherPath(), args: ['--autostart'], name: 'PrismDock' };
     const item = app.getLoginItemSettings(opts).launchItems?.find((i) => i.name === 'PrismDock');
-    app.setLoginItemSettings({ ...opts, openAtLogin: on, enabled: item?.enabled ?? true });
+    app.setLoginItemSettings({ ...opts, openAtLogin: on, enabled: fromUser ? true : item?.enabled ?? true });
   } catch (e) { console.warn('start with Windows:', e.message); }
 }
 function applyConfig(prev) {
   const c = store.config;
   if (prev) integrationsChanged(Object.keys(c.integrations).filter((k) => JSON.stringify(prev.integrations?.[k]) !== JSON.stringify(c.integrations[k])).map((k) => INTEG_NAME[k] || k));
   // written at every start too, so the entry follows the exe when it is moved or updated
-  if (!prev || prev.behavior.startWithWindows !== c.behavior.startWithWindows) setStartWithWindows(c.behavior.startWithWindows);
+  if (!prev || prev.behavior.startWithWindows !== c.behavior.startWithWindows) setStartWithWindows(c.behavior.startWithWindows, !!prev);
   if (!prev || JSON.stringify(prev.layout) !== JSON.stringify(c.layout) || JSON.stringify(prev.behavior) !== JSON.stringify(c.behavior)) layoutDocks();
   if (c.performance.screenTime) providers.startScreenTime(store); else providers.stopScreenTime();
   watchFullscreen();
@@ -278,7 +280,7 @@ function registerIpc() {
   ipcMain.handle('cfg:reset', (_e, section) => updateConfig(() => store.reset(section)));
   ipcMain.handle('layout:action', (_e, action, a) => updateConfig(() => store.profileAction(action, a)));
   ipcMain.handle('cfg:export', async () => {
-    const r = await dialog.showSaveDialog({ title: 'Export configuration', defaultPath: `prismdock-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: 'PrismDock', extensions: ['json'] }] });
+    const r = await dialog.showSaveDialog({ title: 'Export configuration', defaultPath: `prismdock-${new Date().toLocaleDateString('sv-SE')}.json`, filters: [{ name: 'PrismDock', extensions: ['json'] }] });
     if (r.canceled) return null;
     fs.writeFileSync(r.filePath, JSON.stringify(store.exportBundle(), null, 2));
     return r.filePath;
@@ -342,18 +344,29 @@ function registerIpc() {
       case 'open': {
         if (!a.target) return false;
         if (a.target === '@downloads') a.target = app.getPath('downloads');
-        if (/^shell:/i.test(a.target)) { require('child_process').spawn('explorer.exe', [a.target], { detached: true }); return true; }
+        if (typeof a.target !== 'string') return false;
+        // shell folders ("shell:Downloads") and Store apps ("shell:AppsFolder\<AppUserModelID>"), nothing else
+        if (/^shell:[\w ]+(\\[\w.!-]+)?$/i.test(a.target)) { require('child_process').spawn('explorer.exe', [a.target], { detached: true }); return true; }
         if (SAFE_URL.test(a.target)) { await shell.openExternal(a.target); return true; }
+        // local paths only: no network shares (\\host\x.exe) and no other URL schemes
+        if (/^\\\\/.test(a.target) || /^[a-z][\w+.-]*:\/\//i.test(a.target)) return false;
         const err = await shell.openPath(a.target); return !err;
       }
       case 'reveal': shell.showItemInFolder(a.target); return true;
       case 'resolve': return native.call('shortcut', { path: a.path });
       case 'listDir': {
         if (!a.path) return [];
-        let ents; try { ents = fs.readdirSync(a.path, { withFileTypes: true }); } catch { return []; } // gone, offline drive or no access
+        // asynchronous with a time limit: an offline network share would block the main process (and every dock)
+        // for the whole SMB timeout
+        const within = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+        let ents; try { ents = await within(fs.promises.readdir(a.path, { withFileTypes: true }), 5000); } catch { return []; } // gone, offline or no access
         ents = ents.filter((d) => !d.name.startsWith('.') && !/^desktop\.ini$/i.test(d.name)).slice(0, 200);
-        return ents.map((d) => { const p = path.join(a.path, d.name); let size = 0; try { size = d.isFile() ? fs.statSync(p).size : 0; } catch { /* locked */ } return { name: d.name, path: p, dir: d.isDirectory(), size }; })
-          .sort((x, y) => (y.dir - x.dir) || x.name.localeCompare(y.name));
+        const list = await Promise.all(ents.map(async (d) => {
+          const p = path.join(a.path, d.name); let size = 0;
+          if (d.isFile()) try { size = (await within(fs.promises.stat(p), 2000)).size; } catch { /* locked */ }
+          return { name: d.name, path: p, dir: d.isDirectory(), size };
+        }));
+        return list.sort((x, y) => (y.dir - x.dir) || x.name.localeCompare(y.name));
       }
       case 'focusWindow': return native.call('focus', { hwnd: a.hwnd, toggle: !!a.toggle });
       case 'closeWindow': providers.invalidate('windows'); return native.call('closeWindow', { hwnd: a.hwnd });
@@ -405,7 +418,9 @@ async function screenshot(mode, sender) {
     const src = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
     const dir = path.join(app.getPath('pictures'), 'Screenshots');
     fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, `PrismDock ${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}.png`);
+    // local time in the name, like Windows' own screenshots
+    const n = new Date(); const z = (x) => String(x).padStart(2, '0');
+    const file = path.join(dir, `PrismDock ${n.getFullYear()}-${z(n.getMonth() + 1)}-${z(n.getDate())} ${z(n.getHours())}-${z(n.getMinutes())}-${z(n.getSeconds())}.png`);
     fs.writeFileSync(file, src.thumbnail.toPNG());
     clipboard.writeImage(src.thumbnail);
     return { file };

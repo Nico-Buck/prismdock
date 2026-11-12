@@ -1,4 +1,4 @@
-import { icon, esc, fmtBytes, fmtDate } from '../shared/ui.js';
+import { icon, esc, fmtBytes, fmtDate, fmtTimeShort } from '../shared/ui.js';
 
 const base = (p = '') => p.split('\\').pop().replace(/\.(exe|lnk|url)$/i, '');
 const lc = (s) => (s || '').toLowerCase();
@@ -181,7 +181,7 @@ export default [
       return `<div class="tin sq"><span class="glyph-tile">${icon('clock')}</span></div>`;
     },
     panel(ctx, { recent }) {
-      return `<div class="pn"><div class="pn-head"><h3>${icon('clock', 18)} Recently opened</h3></div><div class="pn-list">${(recent || []).map((f) => `<div class="pn-item" data-a="open" data-v="${esc(f.path)}"><img data-icon="${esc(f.path)}"><div class="grow"><b>${esc(f.name)}</b><span>${fmtDate(new Date(f.mtime), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div></div>`).join('') || '<div class="empty">Nothing here yet.</div>'}</div></div>`;
+      return `<div class="pn"><div class="pn-head"><h3>${icon('clock', 18)} Recently opened</h3></div><div class="pn-list">${(recent || []).map((f) => `<div class="pn-item" data-a="open" data-v="${esc(f.path)}"><img data-icon="${esc(f.path)}"><div class="grow"><b>${esc(f.name)}</b><span>${fmtDate(new Date(f.mtime), { month: 'short', day: 'numeric' })} ${fmtTimeShort(new Date(f.mtime), ctx.cfg.behavior.clock24)}}</span></div></div>`).join('') || '<div class="empty">Nothing here yet.</div>'}</div></div>`;
     },
     panelWidth: 340,
     on: { open: (ctx, el) => { ctx.act('open', { target: el.dataset.v }); ctx.closePanel(); } },

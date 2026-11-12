@@ -56,7 +56,7 @@ export class DockView {
     this._bindEvents();
     new ResizeObserver(() => { if (this.panel) this._positionPanel(); this.glass.invalidate(); this.onZone?.(); }).observe(this.dockEl);
     new ResizeObserver(() => this._scheduleFit()).observe(this.root);
-    new ResizeObserver(() => { if (this.panel) this._positionPanel(); this.glass.invalidate(200); }).observe(this.panelEl);
+    new ResizeObserver(() => { if (this.panel) this._positionPanel(); this.glass.invalidate(200); this.onZone?.(); }).observe(this.panelEl);
     store.listeners.add(() => { for (const t of this.tiles.values()) this._renderTile(t); if (this.panel?.t) this._renderPanel(); });
   }
 
@@ -97,9 +97,12 @@ export class DockView {
     if (this.panel?.t && !this.tiles.has(this.panel.t.inst.uid)) this.closePanel();
     else if (this.panel?.t) {
       // the panel's own subscriptions write into the old tile's data: reopen it on the new tile
-      const nt = this.tiles.get(this.panel.t.inst.uid); const shown = !!this.panel.anchor;
-      Object.assign(nt.data, this.panel.t.data);
-      if (shown && this.panel.kind === 'widget') this.openPanel(nt); else { this.panel.t = nt; this._renderPanel(true); }
+      const nt = this.tiles.get(this.panel.t.inst.uid);
+      if (nt === this.panel.t) this._renderPanel();
+      else {
+        Object.assign(nt.data, this.panel.t.data);
+        if (this.panel.anchor && this.panel.kind === 'widget') this.openPanel(nt); else { this.panel.t = nt; this._renderPanel(true); }
+      }
     }
   }
 
@@ -211,8 +214,8 @@ export class DockView {
     let html;
     try { html = t.def.tile(t.ctx, t.data) || ''; } catch (e) { console.error(t.def.type, e); html = `<div class="tin"><span class="t-sub">Error</span></div>`; }
     if (this.editing) {
-      html += `<button class="rm" data-rm="${t.inst.uid}" title="Remove">${icon('close', 10)}</button>`;
-      if (t.def.sizes.length > 1) html += `<button class="szb" data-cycle="${t.inst.uid}" title="Change size">${t.ctx.size.toUpperCase()}</button>`;
+      html += `<button class="rm" data-rm="${esc(t.inst.uid)}" title="Remove">${icon('close', 10)}</button>`;
+      if (t.def.sizes.length > 1) html += `<button class="szb" data-cycle="${esc(t.inst.uid)}" title="Change size">${t.ctx.size.toUpperCase()}</button>`;
     }
     if (html === t.last && !force) return;
     if (!force && t.el.contains(document.activeElement) && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
@@ -235,6 +238,7 @@ export class DockView {
       const c = this.icons.get(p);
       if (c) { img.src = c; continue; }
       if (c === null) continue;
+      this.icons.set(p, null); // in flight
       const retry = () => setTimeout(() => { if (this.icons.get(p) === null) this.icons.delete(p); }, 15000); // helper busy: ask again later
       this.api.icon(p, 64).then((url) => { if (!url) return retry(); this.icons.set(p, url); for (const i of this.root.querySelectorAll('img[data-icon]')) if (i.dataset.icon === p) i.src = url; }, retry);
     }
@@ -422,15 +426,17 @@ export class DockView {
   setDisplayKey(k) { if (k === this.displayKey) return; this.displayKey = k; if (!this.preview && this.cfg) this._setupAutohide(); }
   _setupAutohide() {
     const on = this._ahOn();
-    this.sensor.style.display = on ? '' : 'none';
+    this._syncSensor();
     this.onZone?.();
     if (!on) this._reveal();
     else this._maybeAutohide();
   }
+  _syncSensor() { this.sensor.style.display = this._ahOn() && this.hidden ? '' : 'none'; }
   _reveal() { clearTimeout(this._hideT); if (this.hidden) { this.hidden = false; this.root.classList.remove('dock-hidden'); this.syncDockVisible(); } }
   // show-on-hover and full-screen apps hide the bar with the same frame-synchronous fade as panels
   syncDockVisible() {
     const show = !this.hidden && !this.root.classList.contains('fs-hidden');
+    this._syncSensor();
     if (show === (this._dockShown ?? true)) return;
     this._dockShown = show;
     this._fade(this.wrapEl, show, { dur: show ? 170 : 150, dy: 6 });
@@ -493,8 +499,9 @@ export class DockView {
       const ch = e.target.closest('[data-change]');
       if (ch) { const t = e.target.closest('.panel') ? this.panel?.t : this._tileOf(ch); t?.def.on?.[ch.dataset.change]?.(t.ctx, ch, e); }
     });
-    R.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { if (this.ctxEl.classList.contains('show')) return this.closeCtx(); if (this.panel?.kind === 'editor' && this.panel.renaming) { this.panel.renaming = false; return this._renderEditor(); } return this.closePanel(); }
+    // on the document: tiles cannot take focus and re-rendering the editor drops it, so #root rarely gets keys
+    if (!this.preview) document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { if (this.ctxEl.classList.contains('show')) return this.closeCtx(); if (this.panel?.kind === 'editor' && this.panel.renaming) { this.panel.renaming = false; return this._renderEditor(true); } return this.closePanel(); }
       if (e.key === 'Enter' && e.target.matches('[data-ed-name]')) return this._editorAction({ dataset: { ed: 'renameOk' } });
       if (e.key === 'Enter' && e.target.matches('[data-ed-pos]')) { e.target.blur(); return; }
       if (this.editing && this.selected && !/INPUT|TEXTAREA/.test(e.target.tagName)) {
@@ -515,6 +522,7 @@ export class DockView {
     }, { passive: false });
     R.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      clearTimeout(this._hoverT);
       if (e.target.closest('.panel,.ctx')) return;
       const t = this._tileOf(e.target);
       if (!t && !e.target.closest('.dock')) return;

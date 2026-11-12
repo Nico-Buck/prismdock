@@ -1,4 +1,4 @@
-import { icon, esc, fmtClock, fmtTimeShort, wmo, C, WEEKDAYS, WEEKDAYS_LONG, MONTHS, MONTHS_LONG } from '../shared/ui.js';
+import { icon, esc, fmtClock, fmtTimeShort, wmo, C, WEEKDAYS, WEEKDAYS_LONG, MONTHS, MONTHS_LONG, sunMoments } from '../shared/ui.js';
 
 const P = (ctx, n) => Math.round(n * ctx.u);
 // Open-Meteo days are plain dates ("2026-11-13"); new Date() would read them as UTC midnight, the day before west of UTC
@@ -16,8 +16,10 @@ const tzOffset = (tz) => {
   if (!validTz(tz)) return 'unknown time zone';
   const d = new Date();
   const a = new Date(d.toLocaleString('en-US', { timeZone: tz })); const b = new Date(d.toLocaleString('en-US'));
-  const h = Math.round(((a - b) / 36e5) * 2) / 2;
-  return h === 0 ? 'same time' : (h > 0 ? '+' : '') + h + ' h';
+  const m = Math.round((a - b) / 6e4); // minutes: Nepal is +5:45, India +5:30
+  if (m === 0) return 'same time';
+  const am = Math.abs(m);
+  return (m > 0 ? '+' : '−') + Math.floor(am / 60) + (am % 60 ? ':' + String(am % 60).padStart(2, '0') : '') + ' h';
 };
 const hm = (ctx, h, m) => { let hh = h; let suffix = ''; if (!ctx.cfg.behavior.clock24) { suffix = h < 12 ? ' AM' : ' PM'; hh = h % 12 || 12; } return `${String(hh).padStart(2, '0')}:${String(m).padStart(2, '0')}${suffix}`; };
 
@@ -44,6 +46,8 @@ function flipCards(ctx, str) {
 const cities = (s) => (s.cities || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => { const [tz, label] = x.split('='); return { tz, label: label || tz.split('/').pop().replace(/_/g, ' ') }; });
 
 function weatherTile(ctx, w, kind) {
+  // the small square tile has room for a glyph only while there is no data
+  if (ctx.size === 's' && !w?.connected) return `<div class="tin sq"><span class="glyph-tile">${icon('cloud')}</span></div>`;
   if (!w) return `<div class="tin"><span class="t-sub">…</span></div>`;
   if (!w.connected) return `<div class="tin"><span class="glyph-tile">${icon('cloud')}</span><div class="col" style="gap:calc(6px*var(--u))"><span class="t-title">Weather</span><span class="t-sub">${w.error ? 'Offline' : 'Choose a city'}</span></div></div>`;
   const c = w.current; const x = wmo(c.weather_code, c.is_day);
@@ -173,7 +177,7 @@ export default [
     tile(ctx, { 'integ:weather': w }) {
       const d = new Date(); const c = w?.connected ? w.current : null;
       const blk = (bg, fg, txt, flex = 1) => `<span style="flex:${flex};display:flex;align-items:center;justify-content:center;background:${bg};color:${fg};font-weight:700;font-size:calc(10px*var(--fu))" class="num">${txt}</span>`;
-      return `<div style="position:absolute;inset:3px;border-radius:calc(var(--tile-r) - 3px);overflow:hidden;display:flex;flex-direction:column;gap:2px">${blk('#ff9f0a', '#3a2300', fmtTimeShort(d, true), 1.3)}<span style="flex:1;display:flex;gap:2px">${blk('#0a84ff', '#fff', d.getDate())}${blk('#30d158', '#063a14', c ? Math.round(c.temperature_2m) + '°' : '–')}</span></div><div class="tin sq"></div>`;
+      return `<div style="position:absolute;inset:3px;border-radius:calc(var(--tile-r) - 3px);overflow:hidden;display:flex;flex-direction:column;gap:2px">${blk('#ff9f0a', '#3a2300', fmtTimeShort(d, ctx.cfg.behavior.clock24).replace(/s?[AP]M/, ''), 1.3)}<span style="flex:1;display:flex;gap:2px">${blk('#0a84ff', '#fff', d.getDate())}${blk('#30d158', '#063a14', c ? Math.round(c.temperature_2m) + '°' : '–')}</span></div><div class="tin sq"></div>`;
     },
     ...W,
   },
@@ -215,10 +219,11 @@ export default [
     sizes: ['m'], size: 'm', topics: ['clock', 'integ:weather'],
     tile(ctx, { 'integ:weather': w }) {
       if (!w?.connected) return weatherTile(ctx, w, 'main');
-      const sr = new Date(w.daily.sunrise[0]), ss = new Date(w.daily.sunset[0]); const now = Date.now();
-      const p = Math.max(0, Math.min(1, (now - sr) / (ss - sr)));
+      const sr = new Date(w.daily.sunrise[0]), ss = new Date(w.daily.sunset[0]); const now = Date.now(); // shown as the city's time
+      const [ra, sa] = sunMoments(w); // the actual moments, for the sun's position
+      const p = Math.max(0, Math.min(1, (now - ra) / (sa - ra)));
       const Wd = P(ctx, 64), H = P(ctx, 28); const x = p * Wd; const y = H - Math.sin(p * Math.PI) * (H - 6) - 2;
-      const up = now > +sr && now < +ss; const h24 = ctx.cfg.behavior.clock24;
+      const up = now > +ra && now < +sa; const h24 = ctx.cfg.behavior.clock24;
       return `<div class="tin wide"><svg width="${Wd}" height="${H + 4}" style="overflow:visible"><path d="M0 ${H} Q${Wd / 2} ${-H + 12} ${Wd} ${H}" fill="none" stroke="var(--text-3)" stroke-width="1.3" stroke-dasharray="2.5 3"/><line x1="-4" x2="${Wd + 4}" y1="${H}" y2="${H}" stroke="var(--track)" stroke-width="1"/><circle cx="${x}" cy="${up ? y : H}" r="${P(ctx, 5)}" fill="${up ? '#ffd60a' : '#5e5ce6'}" style="filter:drop-shadow(0 0 4px ${up ? '#ffd60a' : '#5e5ce6'})"/></svg>
         <div class="col" style="gap:calc(6px*var(--u))"><span class="t-sub num">↑ ${fmtTimeShort(sr, h24)}</span><span class="t-sub num">↓ ${fmtTimeShort(ss, h24)}</span></div></div>`;
     },

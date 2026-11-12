@@ -1,10 +1,17 @@
 // Account-based widgets. Without a connection each shows sample numbers with a visible
 // DEMO badge and its panel says what is needed - never invented "live" values.
-import { icon, brandTile, esc, fmtNum, fmtMoney, bar, meter, C, relTime, fmtDur } from '../shared/ui.js';
+import { icon, brandTile, esc, fmtNum, fmtMoney, bar, meter, C, relTime, fmtDur, fmtDate, fmtTimeShort } from '../shared/ui.js';
 import { lineChart, spark } from '../shared/graph.js';
 
 const DEMO = '<span class="demo-badge">Demo</span>';
 const isLive = (d) => d && d.connected;
+// the sources in the currency with the most revenue (amounts in different currencies are never added up)
+const mainCurrency = (list) => {
+  const by = {}; for (const r of list) (by[r.currency || ''] ||= []).push(r);
+  return Object.values(by).sort((a, b) => b.reduce((x, r) => x + r.total, 0) - a.reduce((x, r) => x + r.total, 0))[0] || [];
+};
+// a Codex window whose reset time has passed since the last log line is empty again
+const codexExpired = (w, c) => w.resets_in_seconds != null && w.resets_in_seconds - (Date.now() - c.rateAt) / 1000 <= 0;
 const P = (ctx, n) => Math.round(n * ctx.u);
 const BRAND = 40; // brand tile size in tile units (the CSS scales it to the bar)
 
@@ -140,7 +147,7 @@ export default [
       return `<div class="pn"><div class="pn-head"><h3>${brandTile('linear', 26)} Linear</h3></div><div class="pn-list">${g.issues.map((i) => `<div class="pn-item" ${i.url ? `data-a="openUrl" data-v="${esc(i.url)}"` : ''}><span style="width:8px;height:8px;border-radius:50%;background:${pc[i.priority] || pc[0]}"></span><div class="grow"><b>${esc(i.title)}</b><span>${esc(i.identifier)} · ${esc(i.state.name)}</span></div></div>`).join('') || '<div class="empty">No open issues.</div>'}</div>
         ${demoNote(ctx, d, 'Add a personal Linear API key under Integrations.')}</div>`;
     },
-    panelWidth: 340, on: { ...connectOn, openUrl: (ctx, el) => ctx.act('open', { target: el.dataset.v }) },
+    panelWidth: 340, on: { ...connectOn, openUrl: (ctx, el) => (/^https:\/\//i.test(el.dataset.v) ? ctx.act('open', { target: el.dataset.v }) : false) /* links from service data: web only */ },
   },
   {
     type: 'supabase', name: 'Supabase', cat: 'developer', icon: 'bolt', brand: 'supabase', desc: 'API requests on your project, and its health.',
@@ -196,14 +203,16 @@ export default [
       const c = aiLocal?.codex; const r = c?.rate;
       if (!r) return aiTile(ctx, 'chatgpt', [['Session', 34, '2h 12m', '34%'], ['Weekly', 21, 'Thu', '21%']], false);
       const p = r.primary || {}; const s = r.secondary || {};
-      const reset = (w) => (w.resets_in_seconds != null ? fmtDur(w.resets_in_seconds - (Date.now() - c.rateAt) / 1000, true) : '');
-      return aiTile(ctx, 'chatgpt', [['Session', p.used_percent || 0, reset(p), Math.round(p.used_percent || 0) + '%'], ['Weekly', s.used_percent || 0, reset(s), Math.round(s.used_percent || 0) + '%']], true);
+      const reset = (w) => (w.resets_in_seconds != null && !codexExpired(w, c) ? fmtDur(w.resets_in_seconds - (Date.now() - c.rateAt) / 1000, true) : '');
+      const pc = (w) => (codexExpired(w, c) ? 0 : w.used_percent || 0);
+      return aiTile(ctx, 'chatgpt', [['Session', pc(p), reset(p), Math.round(pc(p)) + '%'], ['Weekly', pc(s), reset(s), Math.round(pc(s)) + '%']], true);
     },
     panel(ctx, { aiLocal }) {
       const c = aiLocal?.codex;
       if (!c?.rate) return aiPanel(ctx, 'chatgpt', 'ChatGPT / Codex', `<div class="pn-grid c2"><div class="pn-stat"><b>34%</b><span>5-hour window (sample)</span></div><div class="pn-stat"><b>21%</b><span>Weekly (sample)</span></div></div>`, null, c ? 'Codex logs were found but contain no limit data yet. Real values appear after your next Codex response.' : 'No local Codex CLI logs (~/.codex/sessions) were found. The ChatGPT web app does not expose its limits through an API.');
       const p = c.rate.primary || {}, s = c.rate.secondary || {};
-      return aiPanel(ctx, 'chatgpt', 'Codex', `<div class="pn-grid c2"><div class="pn-stat"><b>${Math.round(p.used_percent || 0)}%</b><span>5-hour window</span></div><div class="pn-stat"><b>${Math.round(s.used_percent || 0)}%</b><span>Weekly window</span></div></div><div class="pn-grid c2"><div class="pn-stat"><b>${fmtNum(c.today)}</b><span>Tokens today</span></div><div class="pn-stat"><b>${fmtNum(c.week)}</b><span>Tokens, 7 days</span></div></div><div class="pn-muted">Updated ${c.rateAt ? new Date(c.rateAt).toLocaleString('en-US') : '–'} · ${esc(c.source)}</div>`, null);
+      const pc = (w) => Math.round(codexExpired(w, c) ? 0 : w.used_percent || 0);
+      return aiPanel(ctx, 'chatgpt', 'Codex', `<div class="pn-grid c2"><div class="pn-stat"><b>${pc(p)}%</b><span>5-hour window</span></div><div class="pn-stat"><b>${pc(s)}%</b><span>Weekly window</span></div></div><div class="pn-grid c2"><div class="pn-stat"><b>${fmtNum(c.today)}</b><span>Tokens today</span></div><div class="pn-stat"><b>${fmtNum(c.week)}</b><span>Tokens, 7 days</span></div></div><div class="pn-muted">Updated ${c.rateAt ? `${fmtDate(new Date(c.rateAt))} ${fmtTimeShort(new Date(c.rateAt), ctx.cfg.behavior.clock24)}` : '–'} · ${esc(c.source)}</div>`, null);
     },
     panelWidth: 340, on: connectOn,
   },
@@ -240,24 +249,25 @@ export default [
     type: 'revenue', name: 'Revenue Dashboard', cat: 'finance', icon: 'dollar', desc: 'Every connected store’s last 30 days added up, with a monthly goal and its pace.',
     sizes: ['m'], size: 'm', topics: ['integ:stripe', 'integ:paypal', 'integ:shopify'],
     tile(ctx, d) {
-      const live = ['stripe', 'paypal', 'shopify'].map((k) => d[`integ:${k}`]).filter(isLive);
+      const live = mainCurrency(['stripe', 'paypal', 'shopify'].map((k) => d[`integ:${k}`]).filter(isLive));
       const total = live.length ? live.reduce((a, x) => a + x.total, 0) : 2980;
-      const cur = live[0]?.currency || 'EUR'; const goal = ctx.cfg.integrations.revenueGoal || 5000;
+      const cur = live[0]?.currency || 'EUR'; const goal = ctx.cfg.integrations.revenueGoal ?? 5000;
       return `<div class="tin wide"><span class="glyph-tile" style="background:linear-gradient(135deg,#30d158,#0a8f3a);color:#fff">${icon('dollar')}</span><div class="col" style="gap:calc(6px*var(--u));width:calc(120px*var(--u))"><div class="row" style="justify-content:space-between"><span class="t-big" style="font-weight:650;font-size:calc(15px*var(--fu))">${fmtMoney(total, cur)}</span><span class="t-xs num">${Math.round((total / goal) * 100)}%</span></div>${bar((total / goal) * 100, C.green)}</div>${live.length ? '' : DEMO}</div>`;
     },
     panel(ctx, d) {
       const src = ['stripe', 'paypal', 'shopify'].map((k, i) => [k, revenueOf(d[`integ:${k}`], i + 1), isLive(d[`integ:${k}`])]);
       const live = src.filter((x) => x[2]);
-      const use = live.length ? live : src;
+      const all = live.length ? live : src;
+      const main = mainCurrency(all.map((x) => x[1])); const use = all.filter((x) => main.includes(x[1])); // one currency in the sum
       const cur = use[0][1].currency; const total = use.reduce((a, x) => a + x[1].total, 0);
       const series = use[0][1].series.map((_, i) => use.reduce((a, x) => a + (x[1].series[i]?.value || 0), 0));
-      const goal = ctx.cfg.integrations.revenueGoal || 5000;
+      const goal = ctx.cfg.integrations.revenueGoal ?? 5000;
       const dayOfMonth = new Date().getDate(); const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
       const pace = (series.slice(-dayOfMonth).reduce((a, x) => a + x, 0) / dayOfMonth) * daysInMonth;
       return `<div class="pn"><div class="pn-head"><h3>${icon('dollar', 18)} Total revenue</h3><span class="sub">30 days</span></div><div class="pn-big">${fmtMoney(total, cur)}</div>
         <div class="pn-sec chart">${lineChart(series, { h: 80, color: C.green, dot: true, grid: [0.5, 1] })}</div>
-        <div class="pn-row"><span class="dim">Goal ${fmtMoney(goal, cur)}</span>${bar((pace / goal) * 100, pace >= goal ? C.green : C.orange)}<span class="val">${fmtMoney(pace, cur)}</span></div>
-        <div class="pn-sec">${use.map(([k, r, l]) => `<div class="pn-row">${brandTile(k, 22)}<span class="grow">${k[0].toUpperCase() + k.slice(1)}${l ? '' : ' <span class="demo-badge" style="position:static">Demo</span>'}</span><span class="val">${fmtMoney(r.total, r.currency)}</span></div>`).join('')}</div>
+        <div class="pn-row"><span class="dim">${goal > 0 ? `Goal ${fmtMoney(goal, cur)}` : 'Pace this month'}</span>${goal > 0 ? bar((pace / goal) * 100, pace >= goal ? C.green : C.orange) : '<span class="grow"></span>'}<span class="val">${fmtMoney(pace, cur)}</span></div>
+        ${all.length > use.length ? `<div class="pn-muted">Sources in another currency are listed below but not added to the total.</div>` : ''}<div class="pn-sec">${all.map(([k, r, l]) => `<div class="pn-row">${brandTile(k, 22)}<span class="grow">${k[0].toUpperCase() + k.slice(1)}${l ? '' : ' <span class="demo-badge" style="position:static">Demo</span>'}</span><span class="val">${fmtMoney(r.total, r.currency)}</span></div>`).join('')}</div>
         ${live.length ? '' : demoNote(ctx, null, 'Connect Stripe, PayPal or Shopify under Integrations. Only connected sources are added up.')}</div>`;
     },
     panelWidth: 350, on: connectOn,

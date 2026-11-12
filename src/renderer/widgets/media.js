@@ -74,7 +74,11 @@ const appName = (id = '') => {
   const s = id.toLowerCase();
   if (s.includes('spotify')) return 'Spotify'; if (s.includes('edge')) return 'Microsoft Edge'; if (s.includes('chrome')) return 'Google Chrome'; if (s.includes('firefox')) return 'Firefox';
   if (s.includes('zune') || s.includes('media')) return 'Media Player'; if (s.includes('vlc')) return 'VLC';
-  return id.split('!')[0].split('.').pop() || 'App';
+  if (/^[0-9a-f]{16}$/i.test(id)) return 'Firefox'; // Firefox registers with a hex id
+  // a desktop player reports its exe ("foobar2000.exe", "C:\…\MusicBee.exe"), a store app its package
+  // name ("Microsoft.ZuneMusic_8wekyb3d8bbwe!App")
+  const base = id.split('!')[0].split(/[\\/]/).pop().replace(/\.exe$/i, '').replace(/_[a-z0-9]{13}$/i, '');
+  return (base.includes('.') ? base.split('.').pop() : base) || 'App';
 };
 // one control style everywhere: icon-only prev/next, a solid circular play button
 const ctl = (ctx, a, ic, d, primary = false, disabled = false, color) => `<button class="np-btn ${primary ? 'primary' : ''}" data-a="${a}" ${disabled ? 'disabled' : ''} style="width:${P(ctx, d)}px;height:${P(ctx, d)}px;${primary && color ? `background:${color}` : ''}">${icon(ic, fit(P(ctx, d), P(ctx, 13)))}</button>`;

@@ -37,7 +37,8 @@ export class Hub {
     else if (topic === 'screentime') ms = 30000;
     else if (topic === 'recent') ms = 20000;
     else ms = 5000;
-    return topic === 'clock' ? ms : ms * k;
+    // the clock ticks just after each full second, so a seconds display never skips one
+    return topic === 'clock' ? 1005 - (Date.now() % 1000) : ms * k;
   }
 
   async fetch(topic) {

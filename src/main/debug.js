@@ -7,6 +7,9 @@ const path = require('path');
 function debugServer({ windows, openSettings }) {
   const http = require('http');
   http.createServer(async (req, res) => {
+    // scripts only: a web page could otherwise reach this port (curl and Node send no Origin; exact Host
+    // also stops DNS rebinding)
+    if (req.headers.origin || req.headers['sec-fetch-site'] || req.headers.host !== '127.0.0.1:39847') { res.statusCode = 403; res.end(); return; }
     try {
       const u = new URL(req.url, 'http://x');
       const which = u.searchParams.get('w') || 'dock';
@@ -15,7 +18,8 @@ function debugServer({ windows, openSettings }) {
       if (!win) throw new Error('no window ' + which);
       if (u.pathname === '/eval') {
         let body = ''; for await (const c of req) body += c;
-        const r = await win.webContents.executeJavaScript(body || u.searchParams.get('js'), true);
+        if (req.method !== 'POST') throw new Error('POST the script');
+        const r = await win.webContents.executeJavaScript(body, true);
         res.end(JSON.stringify(r ?? null));
       } else if (u.pathname === '/shot') {
         win.webContents.invalidate(); await new Promise((r) => setTimeout(r, 250));

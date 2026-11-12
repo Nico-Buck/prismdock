@@ -8,13 +8,15 @@ function barHeight(cfg) {
   return l.size === 'custom' ? l.height : ({ S: 46, M: 54, L: 64 })[l.size] || 54;
 }
 function dockBounds(display, cfg, win) {
-  const h = barHeight(cfg) + cfg.layout.margin * 2 + PANEL_SPACE;
   const top = cfg.layout.edge === 'top';
+  // never taller than the display, or panels and menus would open above the screen (1080p at 150 % is 720 px)
+  const h = Math.min(barHeight(cfg) + cfg.layout.margin * 2 + PANEL_SPACE, display.bounds.height);
   // with a reserved AppBar strip, sit exactly in the strip Windows granted us
   if (win?.appbarRect) {
     const r = win.appbarRect;
     const dip = screen.screenToDipRect(null, { x: r[0], y: r[1], width: r[2] - r[0], height: r[3] - r[1] });
-    return { x: display.bounds.x, y: Math.round(top ? dip.y : dip.y + dip.height - h), width: display.bounds.width, height: h };
+    // horizontally too: with a vertical Windows taskbar on this display the granted strip is narrower
+    return { x: Math.round(dip.x), y: Math.round(top ? dip.y : dip.y + dip.height - h), width: Math.round(dip.width), height: h };
   }
   const area = cfg.behavior.hideTaskbar ? display.bounds : display.workArea;
   return { x: area.x, y: top ? area.y : area.y + area.height - h, width: area.width, height: h };

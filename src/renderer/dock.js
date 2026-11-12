@@ -28,12 +28,14 @@ function wpColor() {
   const c = (wp?.color || '30 30 34').split(' ').map(Number);
   return `rgb(${c[0] || 0},${c[1] || 0},${c[2] || 0})`;
 }
+let wallReq = 0;
 function loadWallpaper(w) {
   wp = w;
+  const req = ++wallReq; // an older image that finishes loading later must not win
   if (!w?.url) { wallImg = null; applyGlassSource(); return; }
   const img = new Image();
-  img.onload = () => { wallImg = img; applyGlassSource(); };
-  img.onerror = () => { wallImg = null; applyGlassSource(); };
+  img.onload = () => { if (req !== wallReq) return; wallImg = img; applyGlassSource(); };
+  img.onerror = () => { if (req !== wallReq) return; wallImg = null; applyGlassSource(); };
   img.src = w.url;
 }
 loadWallpaper(await api.wallpaper());

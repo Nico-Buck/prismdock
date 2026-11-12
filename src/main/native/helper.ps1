@@ -49,13 +49,13 @@ public static class PD {
 
     // ---------- Network ----------
     public static long[] Net() {
-        long rx = 0, tx = 0;
+        long rx = 0, tx = 0, ifs = 0;
         foreach (var n in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()) {
             if (n.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
             if (n.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
-            try { var s = n.GetIPStatistics(); rx += s.BytesReceived; tx += s.BytesSent; } catch {}
+            try { var s = n.GetIPStatistics(); rx += s.BytesReceived; tx += s.BytesSent; ifs = ifs * 31 + n.Id.GetHashCode(); } catch {}
         }
-        return new long[] { rx, tx };
+        return new long[] { rx, tx, ifs };
     }
 
     // ---------- Performance counters (GPU / thermal) ----------
@@ -101,7 +101,8 @@ public static class PD {
     }
 
     // ---------- Recycle bin ----------
-    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    // natural packing: 24 bytes on x64 (Pack = 4 gave 20, which 64-bit shell32 rejects with E_INVALIDARG)
+    [StructLayout(LayoutKind.Sequential)]
     public struct RBINFO { public int cbSize; public long size; public long items; }
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern int SHQueryRecycleBin(string root, ref RBINFO info);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern int SHEmptyRecycleBin(IntPtr hwnd, string root, uint flags);
@@ -332,6 +333,10 @@ public static class PD {
             int len = GetWindowTextLength(h); if (len == 0) return true;
             var sb = new StringBuilder(len + 1); GetWindowText(h, sb, len + 1);
             uint pid; GetWindowThreadProcessId(h, out pid); if (pid == selfPid) return true;
+            // Store apps live in an ApplicationFrameWindow of ApplicationFrameHost.exe; the app itself owns its
+            // CoreWindow child (missing while the app is suspended, then the frame host stays the owner)
+            var cls = new StringBuilder(64); GetClassName(h, cls, 64);
+            if (cls.ToString() == "ApplicationFrameWindow") { IntPtr core = FindWindowEx(h, IntPtr.Zero, "Windows.UI.Core.CoreWindow", null); uint cp; if (core != IntPtr.Zero) { GetWindowThreadProcessId(core, out cp); if (cp != 0) pid = cp; } }
             string exe = ExePath(pid);
             if (exe.EndsWith("TextInputHost.exe", StringComparison.OrdinalIgnoreCase)) return true;
             l.Add(new object[] { h.ToInt64(), sb.ToString(), (long)pid, exe, h == fg, IsIconic(h) });
@@ -340,7 +345,7 @@ public static class PD {
     }
     public static void Focus(long hwnd, bool toggle) {
         IntPtr h = new IntPtr(hwnd);
-        if (toggle && GetForegroundWindow() == h && !IsIconic(h)) { ShowWindow(h, 6); return; }
+        if (toggle && (GetForegroundWindow() == h || LastFg == h) && !IsIconic(h)) { ShowWindow(h, 6); LastFg = IntPtr.Zero; return; }
         if (IsIconic(h)) ShowWindow(h, 9);
         keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero); // unlocks SetForegroundWindow
         SetForegroundWindow(h);
@@ -370,6 +375,7 @@ public static class PD {
     // Monitors whose top window is full screen, as flat [l,t,r,b, l,t,r,b, ...]. Per monitor, not just the
     // foreground window: a video stays full screen on one display while you click on another.
     public static int ParentPid = 0;
+    public static IntPtr LastFg = IntPtr.Zero; // last foreground window that is not one of ours
     // powershell.exe is DPI-unaware: on scaled monitors Windows would report window and monitor rects in
     // virtual 96-DPI pixels, which never match Electron's physical ones. Per-monitor v2 gives real pixels.
     [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
@@ -419,7 +425,7 @@ public static class PD {
     public static void WatchFullscreen() {
         if (_fsProc != null) return;
         _fsProc = new WinEventProc(delegate(IntPtr hk, uint ev, IntPtr hwnd, int idObject, int idChild, uint th, uint tm) {
-            if (idObject == 0 && idChild == 0) _fsKick.Set(); });
+            if (idObject == 0 && idChild == 0) { _fsKick.Set(); if (ev == 0x0003) { uint fp; GetWindowThreadProcessId(hwnd, out fp); if (fp != ParentPid) LastFg = hwnd; } } });
         var hooks = new System.Threading.Thread(delegate() {
             SetWinEventHook(0x0003, 0x0003, IntPtr.Zero, _fsProc, 0, 0, 0x0002);  // foreground
             SetWinEventHook(0x0016, 0x0017, IntPtr.Zero, _fsProc, 0, 0, 0x0002);  // minimize start/end
@@ -723,14 +729,19 @@ function Get-Radios {
     Await ([Windows.Devices.Radios.Radio]::GetRadiosAsync()) ([System.Collections.Generic.IReadOnlyList[Windows.Devices.Radios.Radio]])
 }
 
+# netsh labels are translated ("State", "Status", "État" ...), so only language-neutral parts are used: the
+# untranslated SSID label (only present while connected), the value with %, the first rate in Mbps/MBit/s.
+# netsh writes in the OEM codepage.
 function Get-Wifi {
-    $out = netsh wlan show interfaces 2>$null
+    $enc = [Console]::OutputEncoding
+    try { [Console]::OutputEncoding = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage); $out = netsh wlan show interfaces 2>$null }
+    catch { $out = netsh wlan show interfaces 2>$null }
+    finally { try { [Console]::OutputEncoding = $enc } catch { } }
     $r = @{ connected = $false; ssid = ''; signal = 0; rate = '' }
     foreach ($l in $out) {
-        if ($l -match '^\s*SSID\s*:\s*(.+)$') { $r.ssid = $Matches[1].Trim() }
-        elseif ($l -match '^\s*(Signal|Signalqualit\S*)\s*:\s*(\d+)\s*%') { $r.signal = [int]$Matches[2] }
-        elseif ($l -match '^\s*(State|Status)\s*:\s*(connected|verbunden)') { $r.connected = $true }
-        elseif ($l -match '^\s*(Receive rate|Empfangsrate)[^:]*:\s*(.+)$') { $r.rate = $Matches[2].Trim() }
+        if ($l -match '^\s*SSID\s*:\s*(.+)$') { $r.ssid = $Matches[1].Trim(); $r.connected = $r.ssid -ne '' }
+        elseif (-not $r.signal -and $l -match ':\s*(\d{1,3})\s*%\s*$') { $r.signal = [int]$Matches[1] }
+        elseif (-not $r.rate -and $l -match '\((Mbps|MBit/s|Mbit/s|Mbits/s|Mb/s)\)\s*:\s*([\d.,]+)') { $r.rate = $Matches[2] + ' Mbps' }
     }
     $r
 }
@@ -741,7 +752,7 @@ function Invoke-Cmd($cmd, $a) {
         'cpu' { [PD]::Cpu() }
         'mem' { $m = [PD]::Mem(); @{ total = $m[0]; free = $m[1] } }
         'battery' { $b = [PD]::Battery(); @{ ac = $b[0]; flag = $b[1]; percent = $b[2]; saver = $b[3]; secondsLeft = $b[4] } }
-        'net' { $n = [PD]::Net(); @{ rx = $n[0]; tx = $n[1] } }
+        'net' { $n = [PD]::Net(); @{ rx = $n[0]; tx = $n[1]; ifs = [string]$n[2] } }
         'gpu' { [PD]::Gpu() }
         'thermal' { , ([PD]::Thermal()) }
         'disks' { , @([PD]::Disks() | ForEach-Object { @{ name = $_[0]; label = $_[1]; total = $_[2]; free = $_[3] } }) }
@@ -797,14 +808,22 @@ function Invoke-Cmd($cmd, $a) {
             [string](Await ($r.SetStateAsync($st)) ([Windows.Devices.Radios.RadioAccessStatus]))
         }
         'wifi' { Get-Wifi }
+        # Store apps from the Applications folder (their path is the AppUserModelID, e.g. "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")
+        'appsFolder' {
+            $f = (New-Object -ComObject Shell.Application).NameSpace('shell:::{4234d49b-0245-4df3-b780-3893943456e1}')
+            , @($f.Items() | Where-Object { $_.Path -match '^[^\\:]+![^\\]+$' } | ForEach-Object { @{ name = $_.Name; id = $_.Path } })
+        }
         'shortcut' { $sh = New-Object -ComObject WScript.Shell; $l = $sh.CreateShortcut([string]$a.path); @{ target = $l.TargetPath; args = $l.Arguments; icon = $l.IconLocation } }
         'wallpaper' {
             $k = Get-ItemProperty 'HKCU:\Control Panel\Desktop'
             $p = $k.WallPaper
+            # a solid colour background (BackgroundType 1) has no picture; TranscodedWallpaper would be the old one
+            $bt = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers' -ErrorAction SilentlyContinue).BackgroundType
+            if ($bt -eq 1) { $p = '' }
             $cached = Join-Path $env:APPDATA 'Microsoft\Windows\Themes\TranscodedWallpaper'
-            if (-not $p -or -not (Test-Path $p)) { $p = $cached }
+            if ($bt -ne 1 -and (-not $p -or -not (Test-Path $p))) { $p = $cached }
             $color = (Get-ItemProperty 'HKCU:\Control Panel\Colors' -ErrorAction SilentlyContinue).Background
-            @{ path = $p; style = [string]$k.WallpaperStyle; tile = [string]$k.TileWallpaper; color = $color; mtime = (Get-Item $p -ErrorAction SilentlyContinue).LastWriteTime.Ticks }
+            @{ path = $p; style = [string]$k.WallpaperStyle; tile = [string]$k.TileWallpaper; color = $color; mtime = $(if ($p) { (Get-Item -LiteralPath $p -ErrorAction SilentlyContinue).LastWriteTime.Ticks } else { 0 }) }
         }
         default { throw "unknown command $cmd" }
     }

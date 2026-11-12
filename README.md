@@ -80,7 +80,7 @@ telemetry.
 
 ## Widgets
 
-75 widgets in 11 categories, most in up to three sizes:
+75 widgets in 11 categories, many of them in more than one size:
 
 | Category | Widgets |
 | --- | --- |
