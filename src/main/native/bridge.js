@@ -24,12 +24,30 @@ function loader(file) {
   return `& ([scriptblock]::Create([IO.File]::ReadAllText('${file.replace(/'/g, "''")}', [Text.Encoding]::UTF8)))`;
 }
 // The C# compiler behind Add-Type cannot use a %TEMP% path outside the ANSI codepage (a Cyrillic or Chinese
-// user name on a Western Windows): give the helper an ASCII temp folder then.
+// user name on a Western Windows), and every per-user folder contains that name. The helper then gets a fresh
+// folder with a random name under ProgramData that only this user (and SYSTEM) may access, so another user
+// of the PC cannot plant files the compiler would pick up.
+let tempDir;
+const sys32 = (exe) => path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', exe); // never a same-named tool on PATH
 function asciiTemp() {
   const os = require('os');
   if (!/[^\x20-\x7e]/.test(os.tmpdir())) return {};
-  const dir = path.join(process.env.ProgramData || 'C:\\ProgramData', 'PrismDock', 'tmp');
-  try { fs.mkdirSync(dir, { recursive: true }); return { TEMP: dir, TMP: dir }; } catch { return {}; }
+  if (tempDir !== undefined) return tempDir ? { TEMP: tempDir, TMP: tempDir } : {};
+  tempDir = null;
+  try {
+    const { execFileSync } = require('child_process');
+    const sid = /"(S-1-[\d-]+)"/.exec(execFileSync(sys32('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true }))?.[1];
+    if (!sid) return {};
+    const parent = path.join(process.env.ProgramData || 'C:\\ProgramData', 'PrismDock', 'tmp');
+    fs.mkdirSync(parent, { recursive: true });
+    const tag = require('crypto').createHash('sha1').update(sid).digest('hex').slice(0, 10);
+    for (const n of fs.readdirSync(parent)) if (n.startsWith(tag + '-')) try { fs.rmSync(path.join(parent, n), { recursive: true, force: true }); } catch { /* in use */ }
+    const dir = fs.mkdtempSync(path.join(parent, tag + '-'));
+    // own access only, nothing inherited from the shared parent
+    execFileSync(sys32('icacls.exe'), [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '/grant:r', '*S-1-5-18:(OI)(CI)F'], { windowsHide: true, stdio: 'ignore' });
+    tempDir = dir;
+    return { TEMP: dir, TMP: dir };
+  } catch { return {}; } // without a safe folder Add-Type uses the normal one (and may fail, as before)
 }
 
 // Besides replies, the helper pushes {"event": name, ...} lines; they are emitted as events,

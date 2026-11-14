@@ -1,0 +1,12 @@
+# Actions are pinned to commit SHAs in the workflows; Dependabot proposes updates (with the new SHA) as PRs.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3

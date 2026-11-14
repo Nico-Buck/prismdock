@@ -32,7 +32,7 @@ function connect() {
   const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
   const state = b64url(crypto.randomBytes(12));
   return new Promise((resolve, reject) => {
-    const page = (ok, msg) => `<!doctype html><meta charset="utf-8"><title>PrismDock</title><body style="font:15px Segoe UI,sans-serif;background:#111;color:#eee;display:grid;place-items:center;height:100vh;margin:0"><div><h2 style="margin:0 0 8px">${ok ? 'Spotify connected' : 'Spotify connection failed'}</h2><p style="opacity:.7">${msg}</p></div></body>`;
+    const page = (ok, msg) => `<!doctype html><meta charset="utf-8"><title>PrismDock</title><body style="font:15px Segoe UI,sans-serif;background:#111;color:#eee;display:grid;place-items:center;height:100vh;margin:0"><div><h2 style="margin:0 0 8px">${ok ? 'Spotify connected' : 'Spotify connection failed'}</h2><p style="opacity:.7">${String(msg).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])}</p></div></body>`;
     const srv = http.createServer(async (req, res) => {
       const u = new URL(req.url, REDIRECT);
       if (u.pathname !== '/callback') { res.statusCode = 404; res.end(); return; }

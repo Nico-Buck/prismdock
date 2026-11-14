@@ -11,7 +11,6 @@ contextBridge.exposeInMainWorld('prism', {
     get: () => ipcRenderer.invoke('cfg:get'),
     defaults: () => ipcRenderer.invoke('cfg:defaults'),
     patch: (p) => ipcRenderer.invoke('cfg:patch', p),
-    replace: (c) => ipcRenderer.invoke('cfg:replace', c),
     reset: (section) => ipcRenderer.invoke('cfg:reset', section),
     layout: (action, args) => ipcRenderer.invoke('layout:action', action, args),
     export: () => ipcRenderer.invoke('cfg:export'),

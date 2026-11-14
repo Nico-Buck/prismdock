@@ -143,20 +143,21 @@ async function windows() {
   });
 }
 
-function walk(dir, out, depth = 0) {
+// directory walks and log reads use the async fs API: a big folder must not stall the main process (and every dock)
+async function walk(dir, out, depth = 0) {
   let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory() && depth < 3) walk(p, out, depth + 1);
+    if (e.isDirectory() && depth < 3) await walk(p, out, depth + 1);
     else if (/\.(lnk|url)$/i.test(e.name) && !/uninstall|deinstall|readme|help|hilfe/i.test(e.name)) out.push({ name: e.name.replace(/\.(lnk|url)$/i, ''), path: p });
   }
 }
 function startApps() {
   return cached('startApps', 5 * 60 * 1000, async () => {
     const out = [];
-    walk(path.join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft\\Windows\\Start Menu\\Programs'), out);
-    walk(path.join(process.env.APPDATA, 'Microsoft\\Windows\\Start Menu\\Programs'), out);
+    await walk(path.join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft\\Windows\\Start Menu\\Programs'), out);
+    await walk(path.join(process.env.APPDATA, 'Microsoft\\Windows\\Start Menu\\Programs'), out);
     // Store apps (Calculator, Notepad, Terminal, WhatsApp ...) have no shortcut file: they come from the AppsFolder
     const appx = await native.call('appsFolder', {}, 15000).catch(() => []);
     for (const a of appx || []) if (a.name && a.id) out.push({ name: a.name, path: 'shell:AppsFolder\\' + a.id });
@@ -210,17 +211,17 @@ function stopScreenTime() { clearInterval(stTimer); stTimer = null; }
 // ---------- AI usage read from local CLI logs ----------
 // Claude Code writes ~/.claude/projects/**/<session>.jsonl, Codex CLI writes ~/.codex/sessions/**/rollout-*.jsonl
 const fileAgg = new Map(); // path -> { mtime, size, entries: [[ts, tokens]], rate }
-function scanJsonl(root, parseLine, maxAgeDays = 8) {
+async function scanJsonl(root, parseLine, maxAgeDays = 8) {
   const files = [];
   const cutoff = Date.now() - maxAgeDays * 864e5;
-  (function rec(dir, depth) {
+  await (async function rec(dir, depth) {
     let ents = [];
-    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try { ents = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
     for (const e of ents) {
       const p = path.join(dir, e.name);
-      if (e.isDirectory() && depth < 5) rec(p, depth + 1);
+      if (e.isDirectory() && depth < 5) await rec(p, depth + 1);
       else if (e.name.endsWith('.jsonl')) {
-        try { const s = fs.statSync(p); if (s.mtimeMs > cutoff) files.push([p, s]); } catch { /* skip */ }
+        try { const st = await fs.promises.stat(p); if (st.mtimeMs > cutoff) files.push([p, st]); } catch { /* skip */ }
       }
     }
   })(root, 0);
@@ -230,7 +231,7 @@ function scanJsonl(root, parseLine, maxAgeDays = 8) {
     // logs are append-only: on growth read just the new bytes; on anything else start over
     if (!agg || st.size < agg.offset) agg = { offset: 0, mtime: 0, entries: [], rest: '' };
     if (agg.mtime !== st.mtimeMs || agg.offset !== st.size) {
-      readLines(p, agg, st.size, parseLine);
+      await readLines(p, agg, st.size, parseLine);
       agg.mtime = st.mtimeMs;
       fileAgg.set(p, agg);
     }
@@ -243,20 +244,20 @@ function scanJsonl(root, parseLine, maxAgeDays = 8) {
 }
 
 // Reads [agg.offset, size) in 1 MB chunks and feeds complete lines to parseLine.
-function readLines(p, agg, size, parseLine) {
-  let fd;
+async function readLines(p, agg, size, parseLine) {
+  let fh;
   try {
-    fd = fs.openSync(p, 'r');
+    fh = await fs.promises.open(p, 'r');
     const buf = Buffer.alloc(1 << 20);
     while (agg.offset < size) {
-      const n = fs.readSync(fd, buf, 0, Math.min(buf.length, size - agg.offset), agg.offset);
+      const { bytesRead: n } = await fh.read(buf, 0, Math.min(buf.length, size - agg.offset), agg.offset);
       if (n <= 0) break;
       agg.offset += n;
       const lines = (agg.rest + buf.toString('utf8', 0, n)).split('\n');
       agg.rest = lines.pop();
       for (const line of lines) { if (!line) continue; const r = parseLine(line, agg); if (r && r.ts) agg.entries.push(r); }
     }
-  } catch { /* unreadable or locked */ } finally { if (fd !== undefined) fs.closeSync(fd); }
+  } catch { /* unreadable or locked */ } finally { await fh?.close().catch(() => {}); }
   // keep only what the summaries need (last 8 days)
   const cutoff = Date.now() - 8 * 864e5;
   if (agg.entries.length && agg.entries[0].ts < cutoff) agg.entries = agg.entries.filter((e) => e.ts >= cutoff);
@@ -290,7 +291,7 @@ function aiLocal() {
     const out = {};
     const claudeDir = path.join(home, '.claude', 'projects');
     if (fs.existsSync(claudeDir)) {
-      const entries = scanJsonl(claudeDir, (line) => {
+      const entries = await scanJsonl(claudeDir, (line) => {
         if (!line.includes('"usage"')) return null;
         try {
           const j = JSON.parse(line);
@@ -308,7 +309,7 @@ function aiLocal() {
     if (fs.existsSync(codexDir)) {
       // the newest rate-limit line of each log is kept with that log's cache entry: later scans only read
       // new bytes and would otherwise lose it
-      const entries = scanJsonl(codexDir, (line, agg) => {
+      const entries = await scanJsonl(codexDir, (line, agg) => {
         if (!line.includes('token_count')) return null;
         try {
           const j = JSON.parse(line);

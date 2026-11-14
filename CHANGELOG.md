@@ -66,6 +66,12 @@ versions follow [Semantic Versioning](https://semver.org).
   sun position for a weather city in another time zone, 24-hour format, drive letters, Charging vs
   Plugged in, YouTube hidden subscriber counts, Linear error messages, network spikes after VPN connects,
   local screenshot names, and the debug harness and open command are locked down.
+- Security review: windows can no longer navigate away from the app, IPC is answered only for PrismDock's
+  own pages, Windows search links are limited to a query, unused IPC (config replace, key presses) is gone,
+  the data store rejects __proto__ and odd keys, the compiled taskbar guardian is verified by SHA-256
+  before every start, the fallback temp folder is private to the user, the app:// handler checks paths
+  with a separator, log and Start menu scans no longer block the main process, CI actions are pinned to
+  commit SHAs (Dependabot proposes updates).
 
 ### Performance
 - Idle CPU −71 %, mouse-move CPU −49 %, idle memory −18 % compared with 1.2.0 (see README).

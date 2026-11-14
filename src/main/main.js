@@ -8,6 +8,7 @@ const providers = require('./providers');
 const integrations = require('./integrations');
 const spotify = require('./spotify');
 const { dockBounds, targetDisplays, autohideOn, displayInfo, displayKeys } = require('./displays');
+const { isAppUrl, SAFE_URL, SEARCH_URL, SHELL_URL, isLocalPath, isSafeKey } = require('./security');
 const taskbar = require('./taskbar');
 const { setTaskbarHidden, restoreTaskbar, appbar, TB_FILE } = taskbar;
 
@@ -270,22 +271,36 @@ function updateConfig(fn) {
 }
 
 // ---------------- IPC ----------------
-const SAFE_URL = /^(https?:|mailto:|ms-settings:|ms-screenclip:|ms-clock:|spotify:|outlookcal:|search-ms:|ms-actioncenter:|ms-availablenetworks:)/i;
+// IPC is answered only for our own pages in our own windows
+function trustedSender(e) { return isAppUrl(e.senderFrame?.url) && !!BrowserWindow.fromWebContents(e.sender); }
+// No window ever leaves app://prism: a link or script that tries is stopped (https links open in the browser),
+// so a foreign page can never run with the preload API
+app.on('web-contents-created', (_e, wc) => {
+  wc.on('will-navigate', (ev, url) => { if (!isAppUrl(url)) ev.preventDefault(); });
+  wc.on('will-redirect', (ev, url) => { if (!isAppUrl(url)) ev.preventDefault(); });
+  wc.on('will-attach-webview', (ev) => ev.preventDefault());
+  wc.setWindowOpenHandler(({ url }) => { if (/^https:\/\//i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+});
 
 function registerIpc() {
-  ipcMain.handle('cfg:get', () => store.config);
-  ipcMain.handle('cfg:defaults', () => store.defaults());
-  ipcMain.handle('cfg:patch', (_e, p) => updateConfig(() => store.patch(p)));
-  ipcMain.handle('cfg:replace', (_e, c) => updateConfig(() => store.replace(c)));
-  ipcMain.handle('cfg:reset', (_e, section) => updateConfig(() => store.reset(section)));
-  ipcMain.handle('layout:action', (_e, action, a) => updateConfig(() => store.profileAction(action, a)));
-  ipcMain.handle('cfg:export', async () => {
+  // Only our own pages may use the API: a page that is not app://prism (which can only happen through a bug,
+  // navigation is blocked as well) gets nothing, so the renderer is not the only line of defence.
+  const ipc = {
+    handle: (ch, fn) => ipcMain.handle(ch, (e, ...args) => { if (!trustedSender(e)) throw new Error('Not allowed'); return fn(e, ...args); }),
+    on: (ch, fn) => ipcMain.on(ch, (e, ...args) => { if (trustedSender(e)) fn(e, ...args); }),
+  };
+  ipc.handle('cfg:get', () => store.config);
+  ipc.handle('cfg:defaults', () => store.defaults());
+  ipc.handle('cfg:patch', (_e, p) => updateConfig(() => store.patch(p)));
+  ipc.handle('cfg:reset', (_e, section) => updateConfig(() => store.reset(section)));
+  ipc.handle('layout:action', (_e, action, a) => updateConfig(() => store.profileAction(action, a)));
+  ipc.handle('cfg:export', async () => {
     const r = await dialog.showSaveDialog({ title: 'Export configuration', defaultPath: `prismdock-${new Date().toLocaleDateString('sv-SE')}.json`, filters: [{ name: 'PrismDock', extensions: ['json'] }] });
     if (r.canceled) return null;
     fs.writeFileSync(r.filePath, JSON.stringify(store.exportBundle(), null, 2));
     return r.filePath;
   });
-  ipcMain.handle('cfg:import', async () => {
+  ipc.handle('cfg:import', async () => {
     const r = await dialog.showOpenDialog({ title: 'Import configuration', properties: ['openFile'], filters: [{ name: 'PrismDock', extensions: ['json'] }] });
     if (r.canceled || !r.filePaths[0]) return null;
     const bundle = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
@@ -294,62 +309,61 @@ function registerIpc() {
     return r.filePaths[0];
   });
 
-  ipcMain.handle('data:get', (_e, key) => (key === '*' ? { ...store.data, screentime: undefined } : store.data[key]));
-  ipcMain.handle('data:set', (e, key, value) => {
+  ipc.handle('data:get', (_e, key) => (key === '*' ? { ...store.data, screentime: undefined } : store.data[key]));
+  ipc.handle('data:set', (e, key, value) => {
+    if (!isSafeKey(key)) throw new Error('Invalid key'); // no __proto__ & co.
     store.data[key] = value; store.saveData();
     for (const w of BrowserWindow.getAllWindows()) if (w.webContents !== e.sender) w.webContents.send('data', { key, value });
     return true;
   });
 
-  ipcMain.handle('secret:set', (_e, key, value) => { store.setSecret(key, value); integrationsChanged([key.split('.')[0]]); return store.secretKeys(); });
-  ipcMain.handle('secret:keys', () => store.secretKeys());
+  ipc.handle('secret:set', (_e, key, value) => { store.setSecret(key, value); integrationsChanged([key.split('.')[0]]); return store.secretKeys(); });
+  ipc.handle('secret:keys', () => store.secretKeys());
 
-  ipcMain.handle('sys', (_e, name) => providers.sys[name] ? providers.sys[name]() : null);
-  ipcMain.handle('icon', (_e, p, size) => providers.icon(p, size));
-  ipcMain.handle('windows', () => providers.windows());
-  ipcMain.handle('startApps', () => providers.startApps());
-  ipcMain.handle('recent', () => providers.recent());
-  ipcMain.handle('aiLocal', () => providers.aiLocal());
-  ipcMain.handle('screentime', () => store.data.screentime || {});
-  ipcMain.handle('integration', (_e, name, opts) => (name === 'spotify' ? providers.cached('spotify', opts?.refresh ? 0 : 2500, () => spotify.state()) : integrations.get(name, opts)));
-  ipcMain.handle('geocode', (_e, q) => integrations.geocode(q));
-  ipcMain.handle('customJson', (_e, url, ttl) => integrations.customJson(url, ttl));
-  ipcMain.handle('wallpaper', () => wallpaper);
-  ipcMain.handle('appInfo', () => ({ version: app.getVersion(), electron: process.versions.electron, userData: app.getPath('userData'), packaged: app.isPackaged, pid: process.pid }));
-  ipcMain.handle('metrics', () => {
+  ipc.handle('sys', (_e, name) => providers.sys[name] ? providers.sys[name]() : null);
+  ipc.handle('icon', (_e, p, size) => providers.icon(p, size));
+  ipc.handle('windows', () => providers.windows());
+  ipc.handle('startApps', () => providers.startApps());
+  ipc.handle('recent', () => providers.recent());
+  ipc.handle('aiLocal', () => providers.aiLocal());
+  ipc.handle('screentime', () => store.data.screentime || {});
+  ipc.handle('integration', (_e, name, opts) => (name === 'spotify' ? providers.cached('spotify', opts?.refresh ? 0 : 2500, () => spotify.state()) : integrations.get(name, opts)));
+  ipc.handle('geocode', (_e, q) => integrations.geocode(q));
+  ipc.handle('customJson', (_e, url, ttl) => integrations.customJson(url, ttl));
+  ipc.handle('wallpaper', () => wallpaper);
+  ipc.handle('appInfo', () => ({ version: app.getVersion(), electron: process.versions.electron, userData: app.getPath('userData'), packaged: app.isPackaged, pid: process.pid }));
+  ipc.handle('metrics', () => {
     const m = app.getAppMetrics();
     return { processes: m.map((p) => ({ type: p.type, cpu: p.cpu.percentCPUUsage, mem: p.memory.workingSetSize * 1024 })), totalMem: m.reduce((a, p) => a + p.memory.workingSetSize * 1024, 0), cpu: m.reduce((a, p) => a + p.cpu.percentCPUUsage, 0), helper: !!native.proc };
   });
 
-  ipcMain.handle('dock:cursor', () => screen.getCursorScreenPoint());
-  ipcMain.on('dock:ignore', (e, ignore) => { const w = BrowserWindow.fromWebContents(e.sender); if (w && !w.isDestroyed()) { w.mouse.ignore = ignore; applyMouse(w); } });
-  ipcMain.on('dock:zone', (e, zone) => { const w = BrowserWindow.fromWebContents(e.sender); if (w && !w.isDestroyed()) { w.mouse.zone = zone; watchCursor(); } });
-  ipcMain.handle('displays:list', () => {
+  ipc.handle('dock:cursor', () => screen.getCursorScreenPoint());
+  ipc.on('dock:ignore', (e, ignore) => { const w = BrowserWindow.fromWebContents(e.sender); if (w && !w.isDestroyed()) { w.mouse.ignore = ignore; applyMouse(w); } });
+  ipc.on('dock:zone', (e, zone) => { const w = BrowserWindow.fromWebContents(e.sender); if (w && !w.isDestroyed()) { w.mouse.zone = zone; watchCursor(); } });
+  ipc.handle('displays:list', () => {
     const chosen = new Set(targetDisplays(store.config).map((d) => d.id));
     const primary = screen.getPrimaryDisplay().id;
     return displayKeys().map(({ d, key }) => ({ key, label: d.label || 'Display', primary: d.id === primary, width: Math.round(d.size.width * d.scaleFactor), height: Math.round(d.size.height * d.scaleFactor), scale: Math.round(d.scaleFactor * 100), x: d.bounds.x, y: d.bounds.y, active: chosen.has(d.id) }));
   });
-  ipcMain.handle('display:get', (e) => {
+  ipc.handle('display:get', (e) => {
     const w = BrowserWindow.fromWebContents(e.sender);
     const d = screen.getAllDisplays().find((x) => x.id === w?.displayId) || screen.getDisplayMatching(w.getBounds());
     return { ...dockInfo(d), window: w.getBounds() };
   });
-  ipcMain.on('dock:focus', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.focus(); });
-  ipcMain.on('dock:blurSelf', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.blur(); });
-  ipcMain.on('settings:open', (_e, section) => openSettings(section));
-  ipcMain.on('editor:open', (_e, tab) => openEditor(tab));
+  ipc.on('dock:focus', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.focus(); });
+  ipc.on('dock:blurSelf', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.blur(); });
+  ipc.on('settings:open', (_e, section) => openSettings(section));
+  ipc.on('editor:open', (_e, tab) => openEditor(tab));
 
-  ipcMain.handle('act', async (e, name, a = {}) => {
+  ipc.handle('act', async (e, name, a = {}) => {
     switch (name) {
       case 'open': {
         if (!a.target) return false;
         if (a.target === '@downloads') a.target = app.getPath('downloads');
         if (typeof a.target !== 'string') return false;
-        // shell folders ("shell:Downloads") and Store apps ("shell:AppsFolder\<AppUserModelID>"), nothing else
-        if (/^shell:[\w ]+(\\[\w.!-]+)?$/i.test(a.target)) { require('child_process').spawn('explorer.exe', [a.target], { detached: true }); return true; }
-        if (SAFE_URL.test(a.target)) { await shell.openExternal(a.target); return true; }
-        // local paths only: no network shares (\\host\x.exe) and no other URL schemes
-        if (/^\\\\/.test(a.target) || /^[a-z][\w+.-]*:\/\//i.test(a.target)) return false;
+        if (SHELL_URL.test(a.target)) { require('child_process').spawn('explorer.exe', [a.target], { detached: true }); return true; }
+        if (SAFE_URL.test(a.target) || SEARCH_URL.test(a.target)) { await shell.openExternal(a.target); return true; }
+        if (!isLocalPath(a.target)) return false; // see security.js
         const err = await shell.openPath(a.target); return !err;
       }
       case 'reveal': shell.showItemInFolder(a.target); return true;
@@ -370,7 +384,6 @@ function registerIpc() {
       }
       case 'focusWindow': return native.call('focus', { hwnd: a.hwnd, toggle: !!a.toggle });
       case 'closeWindow': providers.invalidate('windows'); return native.call('closeWindow', { hwnd: a.hwnd });
-      case 'key': return native.call('key', { vk: a.vk });
       case 'start': return native.call('key', { vk: 0x5B });
       case 'media': providers.invalidate('media'); return native.call('mediaCmd', { action: a.action, position: a.position || 0 }, 12000);
       case 'spotifyConnect': await spotify.connect(); providers.invalidate('spotify'); return true;
@@ -443,9 +456,11 @@ function registerProtocol() {
       return net.fetch(pathToFileURL(wallpaper.path).toString());
     }
     const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '');
-    const base = rel.startsWith('assets/') ? path.join(ASSETS, '..') : RENDERER;
-    const file = path.normalize(path.join(base, rel));
-    if (!file.startsWith(base)) return new Response('', { status: 403 });
+    // assets/ is served from the assets folder only, everything else from the renderer folder; the check uses
+    // a trailing separator so a sibling folder ("renderer-x") cannot pass
+    const base = rel.startsWith('assets/') ? ASSETS : RENDERER;
+    const file = path.normalize(path.join(base, rel.startsWith('assets/') ? rel.slice(7) : rel));
+    if (!file.startsWith(path.join(base, path.sep))) return new Response('', { status: 403 });
     return net.fetch(pathToFileURL(file).toString());
   });
 }

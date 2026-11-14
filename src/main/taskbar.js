@@ -45,8 +45,19 @@ function startGuard() {
   const hash = crypto.createHash('sha1').update(fs.readFileSync(source)).digest('hex').slice(0, 10);
   const exe = path.join(app.getPath('userData'), `guard-${hash}.exe`);
   // guards compiled by older versions
-  for (const f of fs.readdirSync(app.getPath('userData'))) if (/^guard-[0-9a-f]+\.exe$/.test(f) && f !== path.basename(exe)) try { fs.unlinkSync(path.join(app.getPath('userData'), f)); } catch { /* still running */ }
-  native.call('guard', { pid: process.pid, file: TB_FILE(), source, exe }, 30000).catch((e) => console.warn('taskbar guard not started:', e.message));
+  for (const f of fs.readdirSync(app.getPath('userData'))) if (/^guard-[0-9a-f]+\.exe(\.sha256)?$/.test(f) && !f.startsWith(path.basename(exe))) try { fs.unlinkSync(path.join(app.getPath('userData'), f)); } catch { /* still running */ }
+  // the compiled guard is started only if it is byte for byte the one we compiled (its SHA-256 is kept next to
+  // it); anything else is deleted and compiled again
+  const record = exe + '.sha256';
+  const sha = (f) => { try { return crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex'); } catch { return null; } };
+  if (fs.existsSync(exe)) {
+    let want = null; try { want = fs.readFileSync(record, 'utf8').trim(); } catch { /* none yet */ }
+    if (!want || sha(exe) !== want) try { fs.unlinkSync(exe); } catch { console.warn('taskbar guard: an unknown exe is in the way'); return; }
+  }
+  const fresh = !fs.existsSync(exe);
+  native.call('guard', { pid: process.pid, file: TB_FILE(), source, exe }, 30000)
+    .then(() => { if (fresh) { const h = sha(exe); if (h) fs.writeFileSync(record, h); } })
+    .catch((e) => console.warn('taskbar guard not started:', e.message));
 }
 async function restoreTaskbar({ forget = true } = {}) {
   let restore = -1;
