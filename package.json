@@ -38,7 +38,7 @@
   "devDependencies": {
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "build": {
     "appId": "local.prismdock",
