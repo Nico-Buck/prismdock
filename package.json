@@ -36,7 +36,7 @@
     "check:names": "node scripts/check-names.js"
   },
   "devDependencies": {
-    "electron": "^33.4.11",
+    "electron": "^45.3.0",
     "electron-builder": "^25.1.8",
     "typescript": "^5.9.3"
   },
